@@ -8,203 +8,161 @@ const router = useRouter()
 const settingsStore = useSettingsStore()
 const teamStore = useTeamStore()
 
-const step = ref(0) // 0: welcome / 1: language / 2: apikey / 3: assistant
-
-function getInitial(name: string): string {
-  return name.charAt(0)
-}
-
-const totalSteps = 3
-const progress = computed(() => (step.value / totalSteps) * 100)
-
-// 语言
+const step = ref(1)
 const language = ref<'zh' | 'en'>('zh')
-
-// API key
-const apiKeyInput = ref('')
-const apiKeyError = ref('')
-const apiBaseUrlInput = ref('https://api.deepseek.com')
-
-// 助手
-const selectedAssistant = ref('')
+const apiKey = ref('')
+const apiBaseUrl = ref('')
+const selectedAssistant = ref('writer')
+const isLoading = ref(false)
 
 onMounted(async () => {
   await settingsStore.load()
   await teamStore.load()
-  if (teamStore.presetAssistants.length > 0) {
-    selectedAssistant.value = teamStore.presetAssistants[0].id
-  }
 })
 
-function nextStep() {
-  step.value++
-}
+const canNext = computed(() => {
+  if (step.value === 1) return true
+  if (step.value === 2) return apiKey.value.length > 5
+  if (step.value === 3) return selectedAssistant.value !== ''
+  return false
+})
 
-function prevStep() {
-  if (step.value > 0) step.value--
-}
-
-function validateApiKey(): boolean {
-  const key = apiKeyInput.value.trim()
-  if (!key) {
-    apiKeyError.value = '请输入 API Key'
-    return false
-  }
-  if (!key.startsWith('sk-')) {
-    apiKeyError.value = 'API Key 格式不正确，应为 sk- 开头'
-    return false
-  }
-  apiKeyError.value = ''
-  return true
-}
-
-function handleNext() {
-  if (step.value === 1) {
-    // 语言页，直接进入
-    nextStep()
-  } else if (step.value === 2) {
-    // API key 验证
-    if (validateApiKey()) {
-      nextStep()
-    }
-  } else if (step.value === 3) {
-    // 完成
-    finishOnboarding()
+function next() {
+  if (!canNext.value && step.value < 3) return
+  if (step.value < 3) {
+    step.value++
+  } else {
+    finish()
   }
 }
 
-async function finishOnboarding() {
-  settingsStore.language = language.value
-  settingsStore.apiKey = apiKeyInput.value.trim()
-  settingsStore.apiBaseUrl = apiBaseUrlInput.value.trim()
-  settingsStore.onboardingCompleted = true
-  await settingsStore.save()
-
-  if (selectedAssistant.value) {
-    teamStore.setCurrentAssistant(selectedAssistant.value)
-  }
-
-  router.replace('/')
+function prev() {
+  if (step.value > 1) step.value--
 }
 
 function selectAssistant(id: string) {
   selectedAssistant.value = id
 }
+
+function getInitial(name: string): string {
+  return name.charAt(0)
+}
+
+async function finish() {
+  isLoading.value = true
+  try {
+    settingsStore.language = language.value
+    settingsStore.apiKey = apiKey.value.trim()
+    if (apiBaseUrl.value.trim()) {
+      settingsStore.apiBaseUrl = apiBaseUrl.value.trim()
+    }
+    settingsStore.onboardingCompleted = true
+    await settingsStore.save()
+
+    teamStore.setCurrentAssistant(selectedAssistant.value)
+    await teamStore.save()
+
+    // 等一下给个启动感
+    await new Promise(r => setTimeout(r, 600))
+    router.replace('/team')
+  } catch (e) {
+    console.error('onboarding finish failed', e)
+    isLoading.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="onboarding-view">
+  <div class="view">
     <!-- 顶部拖拽区 -->
     <div class="titlebar-drag" data-tauri-drag-region></div>
-    <div class="onboarding-container">
-      <!-- 进度条 -->
-      <div class="progress-track">
-        <div class="progress-fill" :style="{ width: progress + '%' }"></div>
-      </div>
 
-      <!-- 步骤指示 -->
-      <div class="step-dots">
-        <span
-          v-for="i in totalSteps"
-          :key="i"
-          class="step-dot"
-          :class="{ active: step >= i, completed: step > i }"
-        ></span>
-      </div>
+    <!-- 进度点 -->
+    <div class="steps">
+      <span
+        v-for="i in 3"
+        :key="i"
+        class="step-dot"
+        :class="{ active: step === i, done: step > i }"
+      ></span>
+    </div>
 
-      <!-- 欢迎页（Step 0） -->
-      <div v-if="step === 0" class="step-content welcome-step">
-        <div class="logo-mark"></div>
-        <h1>鲸团</h1>
-        <p class="subtitle">你的第一个 AI 助手团队</p>
-        <p class="desc">
-          一键启动多个 AI 助手，写文案、写代码、做研究，各司其职。
-        </p>
-        <button class="primary-btn" @click="nextStep">
-          开始使用
-        </button>
-        <p class="footnote">无需命令行，开箱即用</p>
-      </div>
+    <!-- 内容 -->
+    <div class="content">
 
-      <!-- 语言选择（Step 1） -->
-      <div v-if="step === 1" class="step-content">
-        <h2>选择语言</h2>
-        <p class="step-desc">选择你的界面语言</p>
+      <!-- Step 1: 语言 -->
+      <div v-if="step === 1" class="step-panel">
+        <div class="brand-mark">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="6" height="6" rx="1.5"></rect>
+            <rect x="14" y="4" width="6" height="6" rx="1.5"></rect>
+            <rect x="4" y="14" width="6" height="6" rx="1.5"></rect>
+            <rect x="14" y="14" width="6" height="6" rx="1.5"></rect>
+          </svg>
+        </div>
+        <h1 class="step-title">欢迎使用鲸团</h1>
+        <p class="step-sub">选择你使用的语言</p>
 
-        <div class="option-list">
+        <div class="lang-options">
           <div
-            class="option-item"
+            class="lang-option"
             :class="{ selected: language === 'zh' }"
             @click="language = 'zh'"
           >
-            <div class="option-main">
-              <span class="option-name">简体中文</span>
-              <span class="option-sub">Chinese Simplified</span>
-            </div>
-            <span v-if="language === 'zh'" class="check-mark"></span>
+            <span class="lang-name">简体中文</span>
+            <span class="lang-check" v-if="language === 'zh'">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
           </div>
           <div
-            class="option-item"
+            class="lang-option"
             :class="{ selected: language === 'en' }"
             @click="language = 'en'"
           >
-            <div class="option-main">
-              <span class="option-name">English</span>
-              <span class="option-sub">English</span>
-            </div>
-            <span v-if="language === 'en'" class="check-mark"></span>
+            <span class="lang-name">English</span>
+            <span class="lang-check" v-if="language === 'en'">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
           </div>
         </div>
-
-        <div class="step-actions">
-          <button class="secondary-btn" @click="prevStep">上一步</button>
-          <button class="primary-btn" @click="handleNext">继续</button>
-        </div>
       </div>
 
-      <!-- API Key（Step 2） -->
-      <div v-if="step === 2" class="step-content">
-        <h2>配置 API Key</h2>
-        <p class="step-desc">输入你的 DeepSeek API Key 以开始使用</p>
+      <!-- Step 2: API Key -->
+      <div v-if="step === 2" class="step-panel">
+        <div class="step-num">2 / 3</div>
+        <h1 class="step-title">输入你的 API Key</h1>
+        <p class="step-sub">你的 key 只存在本地，不会上传</p>
 
-        <div class="form-group">
-          <label class="form-label">API Key</label>
+        <div class="input-field">
           <input
-            v-model="apiKeyInput"
             type="password"
-            class="form-input"
+            v-model="apiKey"
+            class="api-input"
             placeholder="sk-xxxxxxxxxxxxxxxxxxxx"
-            @keyup.enter="handleNext"
+            autocomplete="off"
           />
-          <p v-if="apiKeyError" class="form-error">{{ apiKeyError }}</p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">API 地址（可选）</label>
+        <details class="advanced">
+          <summary>高级设置</summary>
           <input
-            v-model="apiBaseUrlInput"
-            class="form-input"
-            placeholder="https://api.deepseek.com"
+            type="text"
+            v-model="apiBaseUrl"
+            class="adv-input"
+            placeholder="自定义 Base URL（可选）"
           />
-        </div>
-
-        <p class="form-hint">
-          API Key 仅保存在本地，不会上传到任何服务器。
-          <a href="https://platform.deepseek.com/" target="_blank">前往平台获取</a>
-        </p>
-
-        <div class="step-actions">
-          <button class="secondary-btn" @click="prevStep">上一步</button>
-          <button class="primary-btn" :disabled="!apiKeyInput.trim()" @click="handleNext">
-            继续
-          </button>
-        </div>
+        </details>
       </div>
 
-      <!-- 选择助手（Step 3） -->
-      <div v-if="step === 3" class="step-content">
-        <h2>选择默认助手</h2>
-        <p class="step-desc">选择一个你最常用的助手作为默认</p>
+      <!-- Step 3: 选择助手 -->
+      <div v-if="step === 3" class="step-panel">
+        <div class="step-num">3 / 3</div>
+        <h1 class="step-title">选择一位默认助手</h1>
+        <p class="step-sub">每个助手都有不同的专长</p>
 
         <div class="assistant-options">
           <div
@@ -214,38 +172,56 @@ function selectAssistant(id: string) {
             :class="{ selected: selectedAssistant === a.id }"
             @click="selectAssistant(a.id)"
           >
-            <div
-              class="avatar"
-              :style="{ backgroundColor: a.color + '20', color: a.color }"
-            >
+            <div class="opt-avatar" :style="{ backgroundColor: a.color + '15', color: a.color }">
               {{ getInitial(a.name) }}
             </div>
-            <div class="assistant-text">
-              <h3 class="assistant-name">{{ a.name }}</h3>
-              <p class="assistant-role">{{ a.role }}</p>
+            <div class="opt-info">
+              <span class="opt-name">{{ a.name }}</span>
+              <span class="opt-role">{{ a.role }}</span>
             </div>
-            <span v-if="selectedAssistant === a.id" class="check-mark"></span>
+            <span class="opt-check" v-if="selectedAssistant === a.id">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
           </div>
         </div>
+      </div>
 
-        <div class="step-actions">
-          <button class="secondary-btn" @click="prevStep">上一步</button>
-          <button class="primary-btn" @click="handleNext">完成</button>
-        </div>
+      <!-- 操作按钮 -->
+      <div class="actions">
+        <button
+          v-if="step > 1"
+          class="btn btn-ghost"
+          @click="prev"
+          :disabled="isLoading"
+        >
+          返回
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="next"
+          :disabled="!canNext || isLoading"
+        >
+          <template v-if="isLoading && step === 3">
+            <span class="spinner"></span>
+            启动中
+          </template>
+          <template v-else-if="step === 3">开始使用</template>
+          <template v-else>继续</template>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.onboarding-view {
+.view {
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   background: var(--color-bg);
-  padding: 0 var(--space-8) var(--space-8);
 }
 
 .titlebar-drag {
@@ -255,237 +231,189 @@ function selectAssistant(id: string) {
   -webkit-app-region: drag;
 }
 
-.onboarding-container {
-  width: 100%;
-  max-width: 420px;
+/* 步骤点 */
+.steps {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.progress-track {
-  width: 100%;
-  height: 1px;
-  background: var(--color-border-soft);
-  border-radius: 1px;
-  overflow: hidden;
-  margin-bottom: var(--space-5);
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--color-accent);
-  transition: width var(--transition-slow) ease;
-}
-
-.step-dots {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-8);
+  gap: 6px;
+  margin-bottom: var(--space-6);
 }
 
 .step-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: var(--color-border);
+  background: var(--color-bg-tertiary);
   transition: all var(--transition-base);
 }
 
 .step-dot.active {
-  background: var(--color-accent);
+  width: 18px;
+  border-radius: 3px;
+  background: var(--color-signal);
 }
 
-.step-dot.completed {
-  background: var(--color-accent);
+.step-dot.done {
+  background: var(--color-text-tertiary);
 }
 
-.step-content {
-  width: 100%;
-}
-
-/* 欢迎页 */
-.welcome-step {
-  text-align: center;
+/* 内容 */
+.content {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: var(--space-8) 0;
+  width: 100%;
+  max-width: 360px;
+  padding: 0 var(--space-6);
 }
 
-.logo-mark {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: var(--color-accent-soft);
-  margin-bottom: var(--space-6);
-  position: relative;
+.step-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-.logo-mark::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--color-accent);
-  border-radius: 4px;
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-signal-soft);
+  color: var(--color-signal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.welcome-step h1 {
-  font-size: var(--font-2xl);
+.step-num {
+  font-size: 10px;
   font-weight: var(--font-semibold);
-  margin-bottom: var(--space-2);
-  letter-spacing: 0.02em;
-}
-
-.subtitle {
-  font-size: var(--font-md);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--space-6);
-}
-
-.desc {
-  font-size: var(--font-sm);
   color: var(--color-text-tertiary);
-  line-height: 1.7;
-  margin-bottom: var(--space-8);
-  max-width: 320px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-3);
 }
 
-.footnote {
-  margin-top: var(--space-5);
-  font-size: var(--font-xs);
-  color: var(--color-text-muted);
-}
-
-/* 通用 step 样式 */
-.step-content h2 {
+.step-title {
   font-size: var(--font-xl);
   font-weight: var(--font-semibold);
   margin-bottom: var(--space-2);
+  letter-spacing: -0.01em;
 }
 
-.step-desc {
+.step-sub {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
   margin-bottom: var(--space-6);
 }
 
-/* 选项列表 */
-.option-list {
-  margin-bottom: var(--space-6);
+/* 语言选择 */
+.lang-options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-.option-item {
+.lang-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-md);
-  margin-bottom: var(--space-2);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
-.option-item:hover {
+.lang-option:hover {
   border-color: var(--color-border);
-  background: var(--color-bg-tertiary);
 }
 
-.option-item.selected {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+.lang-option.selected {
+  border-color: var(--color-signal);
+  background: var(--color-signal-soft);
 }
 
-.option-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.option-name {
+.lang-name {
   font-size: var(--font-sm);
   font-weight: var(--font-medium);
 }
 
-.option-sub {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
+.lang-check {
+  color: var(--color-signal);
 }
 
-.check-mark {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  position: relative;
-}
-
-.check-mark::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 5px;
-  width: 4px;
-  height: 7px;
-  border: solid var(--color-bg);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-}
-
-/* 表单 */
-.form-group {
-  margin-bottom: var(--space-4);
-}
-
-.form-label {
-  display: block;
-  font-size: var(--font-xs);
-  font-weight: var(--font-medium);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--space-2);
-}
-
-.form-input {
+/* API 输入 */
+.input-field {
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.api-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
   font-size: var(--font-sm);
   color: var(--color-text);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  text-align: center;
+  transition: all var(--transition-base);
+}
+
+.api-input:focus {
   outline: none;
-  transition: all var(--transition-fast);
+  border-color: var(--color-signal);
 }
 
-.form-input:focus {
-  border-color: var(--color-accent);
-}
-
-.form-error {
-  margin-top: var(--space-2);
+.advanced {
+  width: 100%;
   font-size: var(--font-xs);
-  color: var(--color-error);
-}
-
-.form-hint {
-  font-size: 11px;
   color: var(--color-text-tertiary);
-  line-height: 1.6;
-  margin-bottom: var(--space-6);
 }
 
-.form-hint a {
-  color: var(--color-accent);
+.advanced summary {
+  cursor: pointer;
+  list-style: none;
+  text-align: center;
+  padding: var(--space-2);
+  transition: color var(--transition-fast);
 }
 
-/* 助手选项 */
+.advanced summary:hover {
+  color: var(--color-text-secondary);
+}
+
+.adv-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  text-align: center;
+  margin-top: var(--space-2);
+}
+
+.adv-input:focus {
+  outline: none;
+  border-color: var(--color-border);
+}
+
+/* 助手选择 */
 .assistant-options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   margin-bottom: var(--space-6);
 }
 
@@ -497,90 +425,114 @@ function selectAssistant(id: string) {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-md);
-  margin-bottom: var(--space-2);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .assistant-option:hover {
   border-color: var(--color-border);
-  background: var(--color-bg-tertiary);
 }
 
 .assistant-option.selected {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+  border-color: var(--color-signal);
+  background: var(--color-signal-soft);
 }
 
-.avatar {
-  width: 32px;
-  height: 32px;
+.opt-avatar {
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: var(--font-semibold);
   flex-shrink: 0;
 }
 
-.assistant-text {
+.opt-info {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 0;
 }
 
-.assistant-name {
+.opt-name {
   font-size: var(--font-sm);
   font-weight: var(--font-medium);
-  margin-bottom: 1px;
 }
 
-.assistant-role {
-  font-size: 11px;
+.opt-role {
+  font-size: var(--font-2xs);
   color: var(--color-text-tertiary);
 }
 
-/* 操作按钮 */
-.step-actions {
+.opt-check {
+  color: var(--color-signal);
+  flex-shrink: 0;
+}
+
+/* 按钮 */
+.actions {
+  margin-top: auto;
+  margin-bottom: var(--space-8);
   display: flex;
-  justify-content: space-between;
   gap: var(--space-3);
-  margin-top: var(--space-4);
+  width: 100%;
 }
 
-.primary-btn {
+.btn {
   flex: 1;
-  padding: var(--space-3) var(--space-5);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  font-weight: var(--font-medium);
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   font-size: var(--font-sm);
+  font-weight: var(--font-medium);
   border-radius: var(--radius-md);
-  text-align: center;
   transition: all var(--transition-fast);
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
 }
 
-.primary-btn:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-
-.primary-btn:disabled {
+.btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.secondary-btn {
-  padding: var(--space-3) var(--space-5);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-sm);
-  transition: all var(--transition-fast);
+.btn-primary {
+  background: var(--color-text);
+  color: var(--color-bg);
 }
 
-.secondary-btn:hover {
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-ghost:hover:not(:disabled) {
   color: var(--color-text);
-  border-color: var(--color-border-strong);
+  background: var(--color-bg-secondary);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
