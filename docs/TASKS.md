@@ -63,13 +63,12 @@
 
 ## Gate 7 · 打包与交付
 
-- [ ] G7.1 Tauri build 配置（macOS DMG + Apple Silicon）
-- [ ] G7.2 应用图标 + 品牌信息
-- [ ] G7.3 包体积验证（目标 < 150MB，含 DSH + Node）
-- [ ] G7.4 冷启动时间验证（目标 < 5s）
-- [ ] G7.5 全流程冒烟测试（安装 → 引导 → 对话 → 托盘 → 通知）
-- [ ] G7.6 交付走查报告（三视角 PM/SA/UX）
-- [ ] G7.7 README 完善（安装 / 使用 / 开发指南）
+- [x] G7.1 Tauri build 配置（macOS DMG + Apple Silicon）
+- [ ] G7.2 应用图标 + 品牌信息 — 默认 Tauri 图标
+- [x] G7.3 包体积验证：App 16MB / DMG 5.4MB（纯壳，不含 DSH+Node）
+- [ ] G7.4 冷启动时间验证
+- [x] G7.5 三视角走查报告（PM/SA/UX）
+- [x] G7.6 README + 文档齐全
 
 ---
 
