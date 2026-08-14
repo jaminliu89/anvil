@@ -1,35 +1,47 @@
-/* ========== Design Tokens · 鲸团 ========== */
-/*  深色产品级审美，克制，有呼吸感       */
+/* ============================================
+   Design Tokens · 鲸团 (Parchment v3.2)
+   ============================================
+   Quiet Technology · 暖石深色系
+   禁用：蓝/紫/发光/玻璃拟态/emoji
+   ============================================ */
 
 :root {
-  /* 背景 — 三层递进，几乎不黑 */
-  --color-bg: #131314;
-  --color-bg-secondary: #1a1a1c;
-  --color-bg-tertiary: #232326;
-  --color-bg-elevated: #2a2a2e;
+  /* ---- 颜色 ---- */
+  /* 背景 · 暖石系 */
+  --color-bg: #1a1815;
+  --color-bg-secondary: #211f1b;
+  --color-bg-tertiary: #2a2722;
+  --color-bg-elevated: #322e28;
+  --color-bg-inset: #141210;
 
-  /* 文字 — 四级灰度 */
-  --color-text: #f5f5f7;
-  --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #71717a;
-  --color-text-muted: #52525b;
+  /* 文字 · 四级灰度 */
+  --color-text: #e8e4de;
+  --color-text-secondary: #a8a29a;
+  --color-text-tertiary: #787268;
+  --color-text-muted: #555048;
 
-  /* 边框 — 极细、几乎看不见 */
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-soft: rgba(255, 255, 255, 0.04);
-  --color-border-strong: rgba(255, 255, 255, 0.12);
+  /* 边框 · 极细几乎看不见 */
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-border-soft: rgba(255, 255, 255, 0.05);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
 
-  /* 品牌色 — 暖石棕，不是蓝 */
-  --color-accent: #b8a990;
-  --color-accent-hover: #c9bba4;
-  --color-accent-soft: rgba(184, 169, 144, 0.1);
+  /* 主操作 · 近黑 */
+  --color-accent: #e8e4de;
+  --color-accent-hover: #ffffff;
+  --color-accent-soft: rgba(232, 228, 222, 0.08);
+
+  /* 强调色 · 暖石棕 */
+  --color-signal: #b8a990;
+  --color-signal-hover: #c9bba4;
+  --color-signal-soft: rgba(184, 169, 144, 0.12);
 
   /* 功能色 */
-  --color-success: #6b8f5e;
+  --color-success: #8b9e7a;
   --color-warning: #c4a25a;
   --color-error: #c06c6c;
 
-  /* 间距 — 4px 基准 */
+  /* ---- 间距 · 4px 基准 ---- */
+  --space-05: 2px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -39,33 +51,47 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  --space-16: 64px;
 
-  /* 圆角 — 克制 */
+  /* ---- 圆角 · 克制 ---- */
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-pill: 999px;
 
-  /* 字号 */
+  /* ---- 字号 ---- */
+  --font-2xs: 10px;
   --font-xs: 11px;
   --font-sm: 12px;
   --font-base: 13px;
   --font-md: 14px;
-  --font-lg: 16px;
-  --font-xl: 18px;
-  --font-2xl: 22px;
+  --font-lg: 15px;
+  --font-xl: 17px;
+  --font-2xl: 20px;
+  --font-3xl: 24px;
 
-  /* 字重 */
+  /* ---- 字重 ---- */
   --font-regular: 400;
   --font-medium: 500;
   --font-semibold: 600;
 
-  /* 动效 */
+  /* ---- 动效 ---- */
   --transition-fast: 120ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 300ms ease;
+  --transition-ios: 400ms cubic-bezier(0.32, 0.72, 0, 1);
 
-  /* 组件高度 */
-  --header-height: 48px;
+  /* ---- 组件 ---- */
+  --header-height: 44px;
+  --titlebar-height: 38px;
   --sidebar-width: 240px;
+  --control-height: 28px;
+  --control-height-lg: 32px;
+
+  /* ---- 阴影 ---- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.3);
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
 }

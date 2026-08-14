@@ -94,6 +94,8 @@ function selectAssistant(id: string) {
 
 <template>
   <div class="onboarding-view">
+    <!-- 顶部拖拽区 -->
+    <div class="titlebar-drag" data-tauri-drag-region></div>
     <div class="onboarding-container">
       <!-- 进度条 -->
       <div class="progress-track">
@@ -239,10 +241,18 @@ function selectAssistant(id: string) {
 .onboarding-view {
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--color-bg);
-  padding: var(--space-8);
+  padding: 0 var(--space-8) var(--space-8);
+}
+
+.titlebar-drag {
+  width: 100%;
+  height: var(--titlebar-height);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
 .onboarding-container {

@@ -97,7 +97,7 @@ function back() {
 
 <template>
   <div class="settings-view">
-    <header class="settings-header">
+    <header class="settings-header" data-tauri-drag-region>
       <button class="back-btn" @click="back">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 18 9 12 15 6"></polyline>
@@ -233,25 +233,34 @@ function back() {
 }
 
 .settings-header {
-  height: var(--header-height);
+  height: var(--titlebar-height);
   flex-shrink: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: var(--space-3);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--color-border-soft);
-  position: relative;
+  -webkit-app-region: drag;
+}
+
+.settings-header h1 {
+  grid-column: 2;
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
 }
 
 .back-btn {
-  width: 28px;
-  height: 28px;
+  grid-column: 1;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--color-text-tertiary);
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 
 .back-btn:hover {
@@ -259,18 +268,14 @@ function back() {
   background: var(--color-bg-tertiary);
 }
 
-.settings-header h1 {
-  font-size: var(--font-md);
-  font-weight: var(--font-medium);
-}
-
 .save-indicator {
-  position: absolute;
-  right: var(--space-4);
+  grid-column: 3;
+  justify-self: end;
   font-size: var(--font-xs);
   color: var(--color-success);
   opacity: 0;
   transition: opacity var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 
 .save-indicator.visible {

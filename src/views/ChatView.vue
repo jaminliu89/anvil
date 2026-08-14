@@ -42,8 +42,8 @@ function backToTeam() {
 
 <template>
   <div class="chat-view">
-    <!-- 顶栏 -->
-    <header class="chat-header">
+    <!-- 顶栏（含拖拽区） -->
+    <header class="chat-header" data-tauri-drag-region>
       <button class="back-btn" @click="backToTeam">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 18 9 12 15 6"></polyline>
@@ -111,24 +111,28 @@ function backToTeam() {
 }
 
 .chat-header {
-  height: var(--header-height);
+  height: var(--titlebar-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border-soft);
+  background: var(--color-bg);
+  -webkit-app-region: drag;
+  padding-left: 72px; /* 避开交通灯 */
 }
 
 .back-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--color-text-tertiary);
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 
 .back-btn:hover {
@@ -143,13 +147,13 @@ function backToTeam() {
 }
 
 .avatar {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: var(--font-semibold);
 }
 
@@ -160,8 +164,7 @@ function backToTeam() {
 }
 
 .role {
-  font-size: 10px;
-  color: var(--color-text-tertiary);
+  display: none;
 }
 
 .header-spacer {
@@ -174,11 +177,12 @@ function backToTeam() {
   gap: 6px;
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
+  -webkit-app-region: no-drag;
 }
 
 .status-indicator .dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
 }
