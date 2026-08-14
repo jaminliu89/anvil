@@ -7,6 +7,7 @@ export interface Assistant {
   description: string // 详细描述
   avatar: string // emoji 或 icon key（MVP 用 emoji）
   color: string // 品牌色变量名
+  isCustom?: boolean // 是否是用户自定义的
   dshProfile: string // 对应的 DSH profile 名
   mode: 'standard' | 'ptc' | 'minimal' | 'creative'
   defaultPlugins: string[] // 默认启用的插件
