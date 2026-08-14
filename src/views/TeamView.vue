@@ -23,11 +23,8 @@ onMounted(async () => {
     settingsStore.load(),
   ])
 
-  // 如果 DSH 是 idle 状态，后台启动
   if (dshStore.status === 'idle') {
-    startDsh().catch(() => {
-      // 静默失败，用户点助手时再重试
-    })
+    startDsh().catch(() => {})
   }
 })
 
@@ -43,7 +40,7 @@ function openNewAssistant() {
 
 function openEditAssistant(assistant: Assistant, e: Event) {
   e.stopPropagation()
-  if (!assistant.isCustom) return // 内置助手不能编辑
+  if (!assistant.isCustom) return
   editingAssistant.value = assistant
   showEditor.value = true
 }
@@ -61,66 +58,87 @@ async function handleDelete(id: string) {
   await teamStore.deleteAssistant(id)
   showEditor.value = false
 }
+
+function openSettings() {
+  router.push('/settings')
+}
 </script>
 
 <template>
   <div class="team-view">
     <!-- 顶部栏 -->
-    <header class="team-header">
-      <div class="header-left">
-        <h1>我的团队</h1>
-        <span class="dsh-status" :class="dshStore.status">
-          <span class="status-dot"></span>
-          <span class="status-text">
-            {{ dshStore.status === 'running' ? '引擎就绪' :
-               dshStore.status === 'starting' ? '启动中…' :
-               dshStore.status === 'error' ? '引擎异常' : '待机' }}
-          </span>
-        </span>
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1>鲸团</h1>
       </div>
-      <div class="header-right">
-        <button class="new-btn" @click="openNewAssistant">
-          <span class="plus">+</span> 新建助手
-        </button>
-        <button class="settings-btn" @click="router.push('/settings')" title="设置">
-          ⚙
+      <div class="topbar-right">
+        <div class="status-pill" :class="dshStore.status">
+          <span class="dot"></span>
+          <span class="label">
+            {{ dshStore.status === 'running' ? '就绪' :
+               dshStore.status === 'starting' ? '启动中' :
+               dshStore.status === 'error' ? '异常' : '待机' }}
+          </span>
+        </div>
+        <button class="icon-btn" @click="openSettings" title="设置">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
         </button>
       </div>
     </header>
 
-    <!-- 助手网格 -->
-    <div class="team-body">
-      <div class="section-label">预设助手</div>
-      <div class="assistant-grid">
-        <AssistantCard
-          v-for="a in teamStore.presetAssistants"
-          :key="a.id"
-          :assistant="a"
-          @click="openChat(a)"
-        />
-      </div>
+    <!-- 内容区 -->
+    <div class="content">
+      <!-- 预设助手 -->
+      <section class="section">
+        <div class="section-header">
+          <h2>预设助手</h2>
+          <span class="section-count">{{ teamStore.presetAssistants.length }}</span>
+        </div>
+        <div class="card-grid">
+          <AssistantCard
+            v-for="a in teamStore.presetAssistants"
+            :key="a.id"
+            :assistant="a"
+            @click="openChat(a)"
+          />
+        </div>
+      </section>
 
-      <div v-if="teamStore.customAssistants.length > 0" class="section-label" style="margin-top: 32px">
-        我的助手
-      </div>
-      <div v-if="teamStore.customAssistants.length > 0" class="assistant-grid">
-        <AssistantCard
-          v-for="a in teamStore.customAssistants"
-          :key="a.id"
-          :assistant="a"
-          @click="openChat(a)"
-          @contextmenu.prevent="openEditAssistant(a, $event)"
-        >
-          <button class="edit-badge" @click="openEditAssistant(a, $event)" title="编辑">
-            ✎
-          </button>
-        </AssistantCard>
-      </div>
+      <!-- 我的助手 -->
+      <section class="section">
+        <div class="section-header">
+          <div class="section-title-row">
+            <h2>我的助手</h2>
+            <button class="new-btn" @click="openNewAssistant">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              新建
+            </button>
+          </div>
+          <span class="section-count">{{ teamStore.customAssistants.length }}</span>
+        </div>
 
-      <!-- 空状态 -->
-      <div v-if="teamStore.customAssistants.length === 0" class="empty-custom">
-        <p>还没有自定义助手，点右上角「新建助手」创建一个吧</p>
-      </div>
+        <div v-if="teamStore.customAssistants.length > 0" class="card-grid">
+          <AssistantCard
+            v-for="a in teamStore.customAssistants"
+            :key="a.id"
+            :assistant="a"
+            @click="openChat(a)"
+          >
+            <button class="edit-dot" @click="openEditAssistant(a, $event)" title="编辑"></button>
+          </AssistantCard>
+        </div>
+
+        <div v-else class="empty-row">
+          <p class="empty-text">还没有自定义助手</p>
+          <button class="link-btn" @click="openNewAssistant">创建第一个</button>
+        </div>
+      </section>
     </div>
 
     <!-- 编辑弹窗 -->
@@ -142,163 +160,200 @@ async function handleDelete(id: string) {
   background: var(--color-bg);
 }
 
-.team-header {
+/* 顶部栏 */
+.topbar {
+  height: var(--header-height);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-6);
+  padding: 0 var(--space-5);
   border-bottom: 1px solid var(--color-border-soft);
-  height: var(--header-height);
-  flex-shrink: 0;
+  background: var(--color-bg);
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
+.topbar-left h1 {
+  font-size: var(--font-md);
+  font-weight: var(--font-medium);
+  letter-spacing: 0.01em;
 }
 
-.team-header h1 {
-  font-size: var(--font-xl);
-  font-weight: var(--font-semibold);
-}
-
-.dsh-status {
+.topbar-right {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  background: var(--color-bg-tertiary);
+}
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
   border-radius: var(--radius-pill);
   font-size: var(--font-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-soft);
 }
 
-.dsh-status.running {
-  color: var(--color-success);
-}
-
-.dsh-status.starting {
-  color: var(--color-warning);
-}
-
-.dsh-status.error {
-  color: var(--color-error);
-}
-
-.status-dot {
+.status-pill .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
 
-.dsh-status.starting .status-dot {
+.status-pill.running {
+  color: var(--color-success);
+}
+
+.status-pill.starting {
+  color: var(--color-warning);
+}
+
+.status-pill.starting .dot {
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-pill.error {
+  color: var(--color-error);
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.3; }
 }
 
-.header-right {
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.icon-btn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+}
+
+/* 内容区 */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-8) var(--space-12);
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.section {
+  margin-bottom: var(--space-10);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.section-title-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
+.section-header h2 {
+  font-size: var(--font-sm);
+  font-weight: var(--font-medium);
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.section-count {
+  font-size: var(--font-xs);
+  color: var(--color-text-muted);
+  background: var(--color-bg-tertiary);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+}
+
 .new-btn {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-4);
-  background: var(--color-accent);
-  color: #1a1a1a;
-  font-weight: var(--font-semibold);
-  font-size: var(--font-sm);
-  border-radius: var(--radius-md);
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
 }
 
 .new-btn:hover {
-  background: var(--color-accent-hover);
+  color: var(--color-text);
+  border-color: var(--color-border);
+  background: var(--color-bg-elevated);
 }
 
-.plus {
-  font-size: var(--font-lg);
-  font-weight: 400;
-  line-height: 1;
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3);
 }
 
-.settings-btn {
-  width: 32px;
-  height: 32px;
+.empty-row {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  color: var(--color-text-secondary);
-  border-radius: var(--radius-md);
+  padding: var(--space-10) 0;
+  gap: var(--space-3);
+  border: 1px dashed var(--color-border-soft);
+  border-radius: var(--radius-lg);
+}
+
+.empty-text {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.link-btn {
+  font-size: var(--font-sm);
+  color: var(--color-accent);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
 }
 
-.settings-btn:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
+.link-btn:hover {
+  background: var(--color-accent-soft);
 }
 
-.team-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-6);
-}
-
-.section-label {
-  font-size: var(--font-xs);
-  font-weight: var(--font-semibold);
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: var(--space-3);
-}
-
-.assistant-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--space-4);
-}
-
-.empty-custom {
-  margin-top: var(--space-8);
-  text-align: center;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-sm);
-}
-
-.edit-badge {
+.edit-dot {
   position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--color-text-secondary);
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
   opacity: 0;
   transition: all var(--transition-fast);
 }
 
-.assistant-card:hover .edit-badge {
-  opacity: 1;
+.assistant-card:hover .edit-dot {
+  opacity: 0.6;
 }
 
-.edit-badge:hover {
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
+.edit-dot:hover {
+  opacity: 1 !important;
 }
 </style>

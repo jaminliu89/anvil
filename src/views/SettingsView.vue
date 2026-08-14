@@ -7,91 +7,119 @@ import { invoke } from '@tauri-apps/api/core'
 const router = useRouter()
 const settingsStore = useSettingsStore()
 
-const saving = ref(false)
-const saved = ref(false)
+const apiKeyInput = ref('')
+const apiBaseUrlInput = ref('')
+const modelInput = ref('')
+const themeInput = ref<'dark' | 'light' | 'system'>('dark')
+const autostart = ref(false)
+const shortcutEnabled = ref(true)
+const saveSuccess = ref(false)
+const saveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+
+const settingsReady = ref(false)
 
 onMounted(async () => {
   await settingsStore.load()
+  settingsReady.value = true
+  apiKeyInput.value = settingsStore.apiKey
+  apiBaseUrlInput.value = settingsStore.apiBaseUrl
+  modelInput.value = settingsStore.defaultModel
+  themeInput.value = settingsStore.theme
+  autostart.value = settingsStore.autoStart
+  shortcutEnabled.value = settingsStore.globalShortcutEnabled
+  applyTheme(themeInput.value)
 })
 
-async function save() {
-  saving.value = true
+function applyTheme(theme: string) {
+  document.documentElement.dataset.theme = theme
+}
+
+function showSaveIndicator() {
+  saveSuccess.value = true
+  if (saveTimeout.value) clearTimeout(saveTimeout.value)
+  saveTimeout.value = setTimeout(() => {
+    saveSuccess.value = false
+  }, 1500)
+}
+
+async function saveApiKey() {
+  settingsStore.apiKey = apiKeyInput.value
+  settingsStore.apiBaseUrl = apiBaseUrlInput.value
+  settingsStore.defaultModel = modelInput.value
+  await settingsStore.save()
+  showSaveIndicator()
+}
+
+async function saveTheme() {
+  settingsStore.theme = themeInput.value
+  applyTheme(themeInput.value)
+  await settingsStore.save()
+  showSaveIndicator()
+}
+
+async function toggleAutostart() {
+  settingsStore.autoStart = autostart.value
+  await settingsStore.save()
+  // 通知 Rust 侧
   try {
-    await settingsStore.save()
+    await invoke('set_autostart', { enabled: autostart.value })
+  } catch {
+    // 忽略，插件可能没装好
+  }
+  showSaveIndicator()
+}
 
-    // 同步开机自启
-    try {
-      if (settingsStore.autoStart) {
-        await invoke('plugin:autostart|enable')
-      } else {
-        await invoke('plugin:autostart|disable')
-      }
-    } catch (e) {
-      console.warn('设置开机自启失败', e)
+async function toggleShortcut() {
+  settingsStore.globalShortcutEnabled = shortcutEnabled.value
+  await settingsStore.save()
+  try {
+    if (shortcutEnabled.value) {
+      await invoke('register_shortcut')
+    } else {
+      await invoke('unregister_shortcut')
     }
+  } catch {
+    // 忽略
+  }
+  showSaveIndicator()
+}
 
-    saved.value = true
-    setTimeout(() => (saved.value = false), 2000)
-  } finally {
-    saving.value = false
+function quitApp() {
+  if (confirm('确定要退出鲸团吗？')) {
+    invoke('do_quit_app').catch(() => {})
   }
 }
 
-async function quit() {
-  if (confirm('确定要退出鲸团吗？')) {
-    await invoke('quit_app')
-  }
+function back() {
+  router.back()
 }
 </script>
 
 <template>
   <div class="settings-view">
     <header class="settings-header">
-      <button class="back-btn" @click="router.push('/')">← 返回团队</button>
+      <button class="back-btn" @click="back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
       <h1>设置</h1>
+      <div class="save-indicator" :class="{ visible: saveSuccess }">
+        已保存
+      </div>
     </header>
 
-    <div class="settings-body">
+    <div v-if="settingsReady" class="settings-body">
+      <!-- 通用 -->
       <section class="settings-section">
-        <h2>通用</h2>
+        <h2 class="section-title">通用</h2>
 
         <div class="setting-item">
           <div class="setting-info">
-            <span class="setting-title">开机自启</span>
-            <span class="setting-desc">登录后自动在后台启动</span>
+            <span class="setting-name">主题</span>
+            <span class="setting-desc">界面显示风格</span>
           </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              v-model="settingsStore.autoStart"
-              @change="save"
-            />
-            <span class="slider"></span>
-          </label>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <span class="setting-title">全局快捷键</span>
-            <span class="setting-desc">Option + Space 快速唤起 / 隐藏</span>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              v-model="settingsStore.globalShortcutEnabled"
-              @change="save"
-              disabled
-            />
-            <span class="slider"></span>
-          </label>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <span class="setting-title">主题</span>
-            <span class="setting-desc">选择显示主题</span>
-          </div>
-          <select v-model="settingsStore.theme" @change="save" class="select">
+          <select v-model="themeInput" class="select" @change="saveTheme">
             <option value="dark">深色</option>
             <option value="light">浅色</option>
             <option value="system">跟随系统</option>
@@ -100,81 +128,99 @@ async function quit() {
 
         <div class="setting-item">
           <div class="setting-info">
-            <span class="setting-title">语言</span>
-            <span class="setting-desc">界面显示语言</span>
+            <span class="setting-name">开机自启</span>
+            <span class="setting-desc">登录时自动启动鲸团</span>
           </div>
-          <select v-model="settingsStore.language" @change="save" class="select">
-            <option value="zh">简体中文</option>
-            <option value="en">English</option>
-          </select>
+          <label class="toggle">
+            <input type="checkbox" v-model="autostart" @change="toggleAutostart" />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-      </section>
-
-      <section class="settings-section">
-        <h2>AI 配置</h2>
 
         <div class="setting-item">
           <div class="setting-info">
-            <span class="setting-title">默认模型</span>
-            <span class="setting-desc">新建对话时使用的模型</span>
+            <span class="setting-name">全局快捷键</span>
+            <span class="setting-desc">Option + Space 唤起/隐藏窗口</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" v-model="shortcutEnabled" @change="toggleShortcut" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- AI 配置 -->
+      <section class="settings-section">
+        <h2 class="section-title">AI 配置</h2>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-name">API Key</span>
+            <span class="setting-desc">DeepSeek API 密钥</span>
           </div>
           <input
-            v-model="settingsStore.defaultModel"
-            class="input"
-            @blur="save"
+            v-model="apiKeyInput"
+            class="input-inline"
+            type="password"
+            placeholder="sk-..."
+            @blur="saveApiKey"
           />
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
-            <span class="setting-title">API 地址</span>
+            <span class="setting-name">API 地址</span>
             <span class="setting-desc">默认 DeepSeek 官方</span>
           </div>
           <input
-            v-model="settingsStore.apiBaseUrl"
-            class="input"
+            v-model="apiBaseUrlInput"
+            class="input-inline"
             placeholder="https://api.deepseek.com"
-            @blur="save"
+            @blur="saveApiKey"
           />
         </div>
 
         <div class="setting-item">
           <div class="setting-info">
-            <span class="setting-title">API Key</span>
-            <span class="setting-desc">已保存在本地</span>
+            <span class="setting-name">默认模型</span>
+            <span class="setting-desc">对话使用的模型</span>
           </div>
           <input
-            v-model="settingsStore.apiKey"
-            type="password"
-            class="input"
-            placeholder="sk-..."
-            @blur="save"
+            v-model="modelInput"
+            class="input-inline"
+            placeholder="deepseek-chat"
+            @blur="saveApiKey"
           />
         </div>
       </section>
 
+      <!-- 关于 -->
       <section class="settings-section">
-        <h2>关于</h2>
-        <div class="about-row">
-          <span>版本</span>
-          <span class="about-value">0.1.0</span>
+        <h2 class="section-title">关于</h2>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-name">版本</span>
+            <span class="setting-desc">当前安装版本</span>
+          </div>
+          <span class="setting-value">v0.1.0</span>
         </div>
-        <div class="about-row">
-          <span>引擎</span>
-          <span class="about-value">DeepSeek Harness</span>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-name">底层引擎</span>
+            <span class="setting-desc">DeepSeek Harness</span>
+          </div>
+          <span class="setting-value">DSH</span>
         </div>
       </section>
 
-      <section class="settings-section danger">
-        <button class="quit-btn" @click="quit">退出鲸团</button>
-        <p class="hint">关闭窗口会最小化到托盘，不退出应用</p>
+      <!-- 退出 -->
+      <section class="settings-section danger-section">
+        <button class="danger-btn" @click="quitApp">退出鲸团</button>
+        <p class="danger-hint">关闭窗口不会退出，鲸团会在后台运行</p>
       </section>
     </div>
-
-    <!-- 保存提示 -->
-    <transition name="fade">
-      <div v-if="saved" class="save-toast">已保存</div>
-    </transition>
   </div>
 </template>
 
@@ -187,219 +233,218 @@ async function quit() {
 }
 
 .settings-header {
+  height: var(--header-height);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--color-border-soft);
-  height: var(--header-height);
+  position: relative;
 }
 
 .back-btn {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  padding: var(--space-2) var(--space-3);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
   border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
 }
 
 .back-btn:hover {
+  color: var(--color-text);
   background: var(--color-bg-tertiary);
 }
 
 .settings-header h1 {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
+  font-size: var(--font-md);
+  font-weight: var(--font-medium);
+}
+
+.save-indicator {
+  position: absolute;
+  right: var(--space-4);
+  font-size: var(--font-xs);
+  color: var(--color-success);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.save-indicator.visible {
+  opacity: 1;
 }
 
 .settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-6);
+  padding: var(--space-8);
+  max-width: 560px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .settings-section {
   margin-bottom: var(--space-8);
 }
 
-.settings-section h2 {
-  font-size: var(--font-sm);
-  font-weight: var(--font-semibold);
-  color: var(--color-text-secondary);
+.section-title {
+  font-size: var(--font-xs);
+  font-weight: var(--font-medium);
+  color: var(--color-text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   margin-bottom: var(--space-3);
+  padding-left: var(--space-2);
 }
 
 .setting-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border-soft);
 }
 
+.setting-item:first-child {
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
 .setting-item:last-child {
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   border-bottom: none;
+}
+
+.setting-item:only-child {
+  border-radius: var(--radius-md);
 }
 
 .setting-info {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
-.setting-title {
-  font-size: var(--font-base);
+.setting-name {
+  font-size: var(--font-sm);
   color: var(--color-text);
 }
 
 .setting-desc {
-  font-size: var(--font-xs);
+  font-size: 11px;
   color: var(--color-text-tertiary);
 }
 
-.input {
-  width: 280px;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-secondary);
+.setting-value {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.select {
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--color-border-strong);
+}
+
+.input-inline {
+  width: 200px;
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   font-size: var(--font-sm);
   color: var(--color-text);
   text-align: right;
+  outline: none;
   transition: all var(--transition-fast);
 }
 
-.input:focus {
+.input-inline:focus {
   border-color: var(--color-accent);
-  outline: none;
 }
 
-.select {
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  color: var(--color-text);
+/* Toggle */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
   cursor: pointer;
 }
 
-/* Switch 开关 */
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.switch input {
+.toggle input {
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-.slider {
+.toggle-slider {
   position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--color-bg-tertiary);
+  inset: 0;
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
-  transition: 0.2s;
-  border-radius: 22px;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--color-text-tertiary);
-  transition: 0.2s;
-  border-radius: 50%;
-}
-
-input:checked + .slider {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-}
-
-input:checked + .slider:before {
-  transform: translateX(18px);
-  background-color: #1a1a1a;
-}
-
-input:disabled + .slider {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.about-row {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--space-2) 0;
-  font-size: var(--font-sm);
-}
-
-.about-value {
-  color: var(--color-text-secondary);
-}
-
-.settings-section.danger {
-  margin-top: var(--space-8);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.quit-btn {
-  width: 100%;
-  padding: var(--space-3);
-  background: transparent;
-  border: 1px solid var(--color-error);
-  border-radius: var(--radius-md);
-  font-size: var(--font-base);
-  color: var(--color-error);
-  cursor: pointer;
+  border-radius: var(--radius-pill);
   transition: all var(--transition-fast);
 }
 
-.quit-btn:hover {
-  background: rgba(237, 73, 86, 0.1);
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  background: var(--color-text-tertiary);
+  border-radius: 50%;
+  transition: all var(--transition-fast);
 }
 
-.hint {
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
+.toggle input:checked + .toggle-slider {
+  background: var(--color-accent-soft);
+  border-color: transparent;
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background: var(--color-accent);
+}
+
+/* 危险区 */
+.danger-section {
   text-align: center;
+  padding-top: var(--space-4);
 }
 
-.save-toast {
-  position: fixed;
-  bottom: var(--space-8);
-  left: 50%;
-  transform: translateX(-50%);
+.danger-btn {
   padding: var(--space-2) var(--space-6);
-  background: var(--color-success);
-  color: #1a1a1a;
+  color: var(--color-error);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  border-radius: var(--radius-pill);
+  transition: all var(--transition-fast);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
+.danger-btn:hover {
+  background: rgba(192, 108, 108, 0.1);
+  border-color: var(--color-error);
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.danger-hint {
+  margin-top: var(--space-3);
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 </style>

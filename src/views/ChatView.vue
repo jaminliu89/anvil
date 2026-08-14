@@ -10,17 +10,17 @@ const route = useRoute()
 const teamStore = useTeamStore()
 const dshStore = useDshStore()
 
-// 确保当前助手是对的
 onMounted(() => {
   const id = route.params.id as string
   teamStore.setCurrentAssistant(id)
-  // 如果 DSH 没启动，手动启动
   if (dshStore.status === 'idle' || dshStore.status === 'error') {
-    startDsh().catch((e) => console.error('启动 DSH 失败', e))
+    startDsh().catch(() => {})
   }
 })
 
 const assistant = computed(() => teamStore.currentAssistant)
+
+const initial = computed(() => assistant.value?.name.charAt(0) || '?')
 
 const iframeUrl = computed(() => {
   if (dshStore.port) {
@@ -31,59 +31,72 @@ const iframeUrl = computed(() => {
 
 const isLoading = computed(() => dshStore.status !== 'running')
 
-// 手动重试
 function retryStart() {
-  startDsh().catch((e) => console.error('启动 DSH 失败', e))
+  startDsh().catch(() => {})
+}
+
+function backToTeam() {
+  router.push('/')
 }
 </script>
 
 <template>
   <div class="chat-view">
-    <!-- 顶部栏 -->
+    <!-- 顶栏 -->
     <header class="chat-header">
-      <button class="back-btn" @click="router.push('/')">← 返回团队</button>
-      <div class="header-info">
-        <span class="assistant-avatar">{{ assistant?.avatar }}</span>
-        <div>
+      <button class="back-btn" @click="backToTeam">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+
+      <div class="assistant-info">
+        <div class="avatar" :style="{ backgroundColor: (assistant?.color || '#666') + '20', color: assistant?.color }">
+          {{ initial }}
+        </div>
+        <div class="info-text">
           <h2>{{ assistant?.name || '助手' }}</h2>
-          <span class="assistant-role">{{ assistant?.role }}</span>
+          <span class="role">{{ assistant?.role }}</span>
         </div>
       </div>
-      <div class="header-status">
-        <span class="status-dot" :class="dshStore.status"></span>
-        <span class="status-text">
+
+      <div class="header-spacer"></div>
+
+      <div class="status-indicator" :class="dshStore.status">
+        <span class="dot"></span>
+        <span class="label">
           {{ dshStore.status === 'running' ? '运行中' :
-             dshStore.status === 'starting' ? '启动中…' :
-             dshStore.status === 'error' ? '启动失败' :
-             dshStore.status === 'stopping' ? '停止中' : '未启动' }}
+             dshStore.status === 'starting' ? '启动中' :
+             dshStore.status === 'error' ? '异常' :
+             dshStore.status === 'stopping' ? '停止中' : '待机' }}
         </span>
       </div>
     </header>
 
-    <!-- 内容区 -->
+    <!-- 内容 -->
     <div class="chat-body">
-      <!-- 加载态 -->
-      <div v-if="isLoading" class="loading-state">
-        <div class="spinner"></div>
-        <p class="loading-text">
-          {{ dshStore.status === 'starting' ? '正在启动 AI 助手…' :
-             dshStore.status === 'error' ? '启动失败' : '准备中…' }}
-        </p>
-        <p v-if="dshStore.status === 'error'" class="error-msg">
-          {{ dshStore.error }}
-        </p>
-        <button v-if="dshStore.status === 'error'" class="retry-btn" @click="retryStart">
-          重试
-        </button>
+      <div v-if="isLoading" class="loading-overlay">
+        <div class="loading-content">
+          <div class="spinner-ring"></div>
+          <p class="loading-text">
+            {{ dshStore.status === 'starting' ? '正在启动助手…' :
+               dshStore.status === 'error' ? '启动失败' : '准备中' }}
+          </p>
+          <p v-if="dshStore.status === 'error'" class="error-text">
+            {{ dshStore.error }}
+          </p>
+          <button v-if="dshStore.status === 'error'" class="retry-btn" @click="retryStart">
+            重试
+          </button>
+        </div>
       </div>
 
-      <!-- DSH Web UI 嵌入 -->
       <iframe
         v-show="!isLoading"
         :src="iframeUrl"
         class="dsh-iframe"
         frameborder="0"
-        title="DSH Web UI"
+        title="对话"
       ></iframe>
     </div>
   </div>
@@ -98,77 +111,97 @@ function retryStart() {
 }
 
 .chat-header {
+  height: var(--header-height);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--color-border-soft);
-  height: var(--header-height);
 }
 
 .back-btn {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  padding: var(--space-2) var(--space-3);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
   border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
 }
 
 .back-btn:hover {
+  color: var(--color-text);
   background: var(--color-bg-tertiary);
 }
 
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1;
-}
-
-.assistant-avatar {
-  font-size: 20px;
-}
-
-.header-info h2 {
-  font-size: var(--font-md);
-  font-weight: var(--font-semibold);
-}
-
-.assistant-role {
-  font-size: var(--font-xs);
-  color: var(--color-text-secondary);
-}
-
-.header-status {
+.assistant-info {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
 }
 
-.status-dot {
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
+}
+
+.info-text h2 {
+  font-size: var(--font-sm);
+  font-weight: var(--font-medium);
+  line-height: 1.2;
+}
+
+.role {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.status-indicator .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-text-tertiary);
+  background: currentColor;
 }
 
-.status-dot.running {
-  background: var(--color-success);
+.status-indicator.running {
+  color: var(--color-success);
 }
 
-.status-dot.starting {
-  background: var(--color-warning);
+.status-indicator.starting {
+  color: var(--color-warning);
+}
+
+.status-indicator.starting .dot {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-.status-dot.error {
-  background: var(--color-error);
+.status-indicator.error {
+  color: var(--color-error);
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.3; }
 }
 
 .chat-body {
@@ -181,26 +214,32 @@ function retryStart() {
   width: 100%;
   height: 100%;
   border: none;
-  background: white;
+  background: #fff;
 }
 
-.loading-state {
+.loading-overlay {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
+  background: var(--color-bg);
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--space-3);
 }
 
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 2px solid var(--color-border);
+.spinner-ring {
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--color-border);
   border-top-color: var(--color-accent);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -208,20 +247,21 @@ function retryStart() {
 }
 
 .loading-text {
-  font-size: var(--font-md);
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
-.error-msg {
-  font-size: var(--font-sm);
+.error-text {
+  font-size: var(--font-xs);
   color: var(--color-error);
-  max-width: 400px;
+  max-width: 320px;
   text-align: center;
+  line-height: 1.5;
 }
 
 .retry-btn {
   margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-6);
+  padding: var(--space-2) var(--space-5);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

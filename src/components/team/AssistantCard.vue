@@ -1,28 +1,34 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Assistant } from '@/types/assistant'
 
-defineProps<{
+const props = defineProps<{
   assistant: Assistant
 }>()
+
+defineEmits<{
+  click: []
+}>()
+
+// 取名字第一个字作为头像文字
+const initial = computed(() => props.assistant.name.charAt(0))
 </script>
 
 <template>
-  <div class="assistant-card" :style="{ '--assistant-color': assistant.color }">
+  <div class="assistant-card" @click="$emit('click')">
     <div class="card-header">
-      <div class="avatar">{{ assistant.avatar }}</div>
-      <div class="name-section">
-        <h3 class="name">{{ assistant.name }}</h3>
+      <div class="avatar" :style="{ backgroundColor: assistant.color + '20', color: assistant.color }">
+        {{ initial }}
+      </div>
+      <div class="card-title">
+        <h3>{{ assistant.name }}</h3>
         <span class="role">{{ assistant.role }}</span>
       </div>
     </div>
-    <p class="description">{{ assistant.description }}</p>
+    <p class="desc">{{ assistant.description }}</p>
     <div class="card-footer">
-      <span class="mode-tag">{{ 
-        assistant.mode === 'standard' ? '标准' :
-        assistant.mode === 'ptc' ? 'PTC' :
-        assistant.mode === 'minimal' ? '极简' : '创造'
-      }}</span>
-      <span class="open-hint">点击开始 →</span>
+      <span v-if="assistant.isCustom" class="custom-tag">自定义</span>
+      <span v-else class="preset-tag">预设</span>
     </div>
   </div>
 </template>
@@ -37,82 +43,89 @@ defineProps<{
   transition: all var(--transition-base);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  position: relative;
 }
 
 .assistant-card:hover {
   background: var(--color-bg-tertiary);
-  border-color: var(--assistant-color);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  border-color: var(--color-border);
+  transform: translateY(-1px);
+}
+
+.assistant-card:active {
+  transform: translateY(0);
 }
 
 .card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
 }
 
 .avatar {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-md);
-  background: var(--color-bg-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
-}
-
-.name-section {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.name {
   font-size: var(--font-md);
   font-weight: var(--font-semibold);
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+
+.card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-title h3 {
+  font-size: var(--font-md);
+  font-weight: var(--font-medium);
+  color: var(--color-text);
+  margin-bottom: 2px;
 }
 
 .role {
   font-size: var(--font-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
 }
 
-.description {
+.desc {
   font-size: var(--font-sm);
   color: var(--color-text-secondary);
   line-height: 1.6;
-  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border-soft);
+  margin-top: auto;
+  padding-top: var(--space-1);
 }
 
-.mode-tag {
-  font-size: var(--font-xs);
+.preset-tag,
+.custom-tag {
+  font-size: 10px;
+  font-weight: var(--font-medium);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.02em;
+}
+
+.preset-tag {
   color: var(--color-text-tertiary);
   background: var(--color-bg-tertiary);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-soft);
 }
 
-.open-hint {
-  font-size: var(--font-xs);
-  color: var(--assistant-color);
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: all var(--transition-fast);
-}
-
-.assistant-card:hover .open-hint {
-  opacity: 1;
-  transform: translateX(0);
+.custom-tag {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid transparent;
 }
 </style>

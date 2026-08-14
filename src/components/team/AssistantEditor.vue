@@ -4,7 +4,7 @@ import type { Assistant } from '@/types/assistant'
 
 const props = defineProps<{
   visible: boolean
-  assistant?: Assistant | null // 有值=编辑，无值=新建
+  assistant?: Assistant | null
 }>()
 
 const emit = defineEmits<{
@@ -16,24 +16,19 @@ const emit = defineEmits<{
 const name = ref('')
 const role = ref('')
 const description = ref('')
-const avatar = ref('🤖')
 const systemPrompt = ref('')
 
 const isEditing = computed(() => !!props.assistant)
 const title = computed(() => (isEditing.value ? '编辑助手' : '新建助手'))
 
-const avatarOptions = [
-  '🤖', '📝', '💻', '🔍', '🎨', '📊', '🎯', '💡', '📚', '🔧', '🗂️', '✨',
-]
-
 const colorOptions = [
-  '#f59e0b', // writer - 琥珀
-  '#3b82f6', // coder - 蓝
-  '#8b5cf6', // researcher - 紫
-  '#ec4899', // creator - 粉
-  '#10b981', // 绿
-  '#ef4444', // 红
-  '#6b7280', // 灰
+  '#b8a990', // 暖石
+  '#8b9e80', // 雾绿
+  '#9088b8', // 薰紫
+  '#b89090', // 陶土
+  '#8aa8b8', // 灰蓝
+  '#c4a25a', // 琥珀
+  '#a0a0a0', // 石墨
 ]
 
 const selectedColor = ref(colorOptions[0])
@@ -42,24 +37,22 @@ watch(
   () => props.visible,
   (v) => {
     if (v && props.assistant) {
-      // 编辑模式：填充数据
       name.value = props.assistant.name
       role.value = props.assistant.role
       description.value = props.assistant.description
-      avatar.value = props.assistant.avatar
       selectedColor.value = props.assistant.color
       systemPrompt.value = props.assistant.systemPrompt || ''
     } else if (v) {
-      // 新建模式：清空
       name.value = ''
       role.value = ''
       description.value = ''
-      avatar.value = '🤖'
       selectedColor.value = colorOptions[0]
       systemPrompt.value = ''
     }
   },
 )
+
+const initial = computed(() => (name.value ? name.value.charAt(0) : '?'))
 
 function save() {
   if (!name.value.trim()) return
@@ -67,10 +60,10 @@ function save() {
     name: name.value.trim(),
     role: role.value.trim(),
     description: description.value.trim(),
-    avatar: avatar.value,
     color: selectedColor.value,
     systemPrompt: systemPrompt.value.trim(),
-    dshProfile: 'web', // 自定义助手默认 web profile
+    avatar: '',
+    dshProfile: 'web',
     mode: 'standard',
     defaultPlugins: [],
   })
@@ -89,32 +82,23 @@ function handleDelete() {
       <div class="modal">
         <header class="modal-header">
           <h2>{{ title }}</h2>
-          <button class="close-btn" @click="emit('close')">×</button>
+          <button class="close-btn" @click="emit('close')"></button>
         </header>
 
         <div class="modal-body">
-          <div class="form-row">
-            <label>头像</label>
-            <div class="avatar-picker">
-              <button
-                v-for="emoji in avatarOptions"
-                :key="emoji"
-                class="avatar-option"
-                :class="{ active: avatar === emoji }"
-                @click="avatar = emoji"
-              >
-                {{ emoji }}
-              </button>
+          <!-- 头像预览 + 主题色 -->
+          <div class="avatar-preview-row">
+            <div
+              class="avatar-preview"
+              :style="{ backgroundColor: selectedColor + '20', color: selectedColor }"
+            >
+              {{ initial }}
             </div>
-          </div>
-
-          <div class="form-row">
-            <label>主题色</label>
             <div class="color-picker">
               <button
                 v-for="color in colorOptions"
                 :key="color"
-                class="color-option"
+                class="color-swatch"
                 :class="{ active: selectedColor === color }"
                 :style="{ backgroundColor: color }"
                 @click="selectedColor = color"
@@ -162,7 +146,7 @@ function handleDelete() {
             删除
           </button>
           <div class="footer-actions">
-            <button class="btn-secondary" @click="emit('close')">取消</button>
+            <button class="btn-ghost" @click="emit('close')">取消</button>
             <button class="btn-primary" :disabled="!name.trim()" @click="save">
               保存
             </button>
@@ -177,17 +161,17 @@ function handleDelete() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
 }
 
 .modal {
   width: 90%;
-  max-width: 480px;
+  max-width: 440px;
   max-height: 85vh;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
@@ -195,6 +179,7 @@ function handleDelete() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
 }
 
 .modal-header {
@@ -206,25 +191,39 @@ function handleDelete() {
 }
 
 .modal-header h2 {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
+  font-size: var(--font-md);
+  font-weight: var(--font-medium);
 }
 
 .close-btn {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-xl);
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  width: 24px;
+  height: 24px;
+  position: relative;
+  opacity: 0.4;
+  transition: opacity var(--transition-fast);
+}
+
+.close-btn::before,
+.close-btn::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 1px;
+  background: currentColor;
+}
+
+.close-btn::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.close-btn::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
 }
 
 .close-btn:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
+  opacity: 1;
 }
 
 .modal-body {
@@ -233,16 +232,62 @@ function handleDelete() {
   padding: var(--space-5);
 }
 
+.avatar-preview-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+}
+
+.avatar-preview {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-lg);
+  font-weight: var(--font-semibold);
+  flex-shrink: 0;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.color-swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
 .form-row {
   margin-bottom: var(--space-4);
 }
 
 .form-row label {
   display: block;
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: var(--font-medium);
   margin-bottom: var(--space-2);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .input,
@@ -251,64 +296,18 @@ function handleDelete() {
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font-size: var(--font-sm);
   color: var(--color-text);
   font-family: inherit;
   transition: all var(--transition-fast);
   resize: vertical;
+  outline: none;
 }
 
 .input:focus,
 .textarea:focus {
   border-color: var(--color-accent);
-  outline: none;
-}
-
-.avatar-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.avatar-option {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-}
-
-.avatar-option:hover {
-  border-color: var(--color-border-strong);
-}
-
-.avatar-option.active {
-  border-color: var(--color-accent);
-  background: rgba(245, 158, 11, 0.1);
-}
-
-.color-picker {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.color-option {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  transition: all var(--transition-fast);
-}
-
-.color-option.active {
-  border-color: #fff;
-  box-shadow: 0 0 0 2px var(--color-accent);
 }
 
 .modal-footer {
@@ -328,8 +327,8 @@ function handleDelete() {
 .btn-primary {
   padding: var(--space-2) var(--space-5);
   background: var(--color-accent);
-  color: #1a1a1a;
-  font-weight: var(--font-semibold);
+  color: var(--color-bg);
+  font-weight: var(--font-medium);
   border-radius: var(--radius-md);
   font-size: var(--font-sm);
   transition: all var(--transition-fast);
@@ -340,23 +339,23 @@ function handleDelete() {
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-.btn-secondary {
+.btn-ghost {
   padding: var(--space-2) var(--space-5);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   font-size: var(--font-sm);
   transition: all var(--transition-fast);
 }
 
-.btn-secondary:hover {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-border-strong);
+.btn-ghost:hover {
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
 }
 
 .delete-btn {
@@ -364,10 +363,12 @@ function handleDelete() {
   color: var(--color-error);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
+  opacity: 0.8;
   transition: all var(--transition-fast);
 }
 
 .delete-btn:hover {
-  background: rgba(237, 73, 86, 0.1);
+  opacity: 1;
+  background: rgba(192, 108, 108, 0.1);
 }
 </style>
