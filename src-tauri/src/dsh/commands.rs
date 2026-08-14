@@ -42,25 +42,20 @@ pub fn dsh_status() -> DshState {
     }
 }
 
-/// 启动 DSH
+/// 启动 DSH（异步）
 #[tauri::command]
-pub fn dsh_start() -> Result<(), String> {
-    // TODO: 真正的启动逻辑
-    Ok(())
+pub async fn dsh_start() -> Result<u16, String> {
+    DSH_MANAGER.start().await
 }
 
 /// 停止 DSH
 #[tauri::command]
 pub fn dsh_stop() -> Result<(), String> {
-    // TODO: 真正的停止逻辑
-    Ok(())
+    DSH_MANAGER.stop()
 }
 
 /// 获取 DSH 端口
 #[tauri::command]
 pub fn dsh_port() -> Option<u16> {
-    match DSH_MANAGER.get_status() {
-        DshStatus::Running { port } => Some(port),
-        _ => None,
-    }
+    DSH_MANAGER.get_port()
 }
