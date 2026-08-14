@@ -1,0 +1,93 @@
+/* ========== Design Tokens · 鲸团 ========== */
+/*  参考 Hermes Desktop 视觉风格，深色 + 扁平 + 极少装饰   */
+
+:root {
+  /* 颜色 - 背景层 */
+  --color-bg: #0f0f10;
+  --color-bg-secondary: #161618;
+  --color-bg-tertiary: #1d1d20;
+  --color-bg-elevated: #222226;
+
+  /* 颜色 - 边框 */
+  --color-border: #2a2a2e;
+  --color-border-soft: #222226;
+  --color-border-strong: #3a3a40;
+
+  /* 颜色 - 文字 */
+  --color-text: #e8e8ea;
+  --color-text-secondary: #a0a0a8;
+  --color-text-tertiary: #6c6c74;
+  --color-text-disabled: #48484e;
+
+  /* 颜色 - 主色调（暖金，对齐 DSH 调性） */
+  --color-accent: #d4a853;
+  --color-accent-hover: #e0b864;
+  --color-accent-pressed: #c49a45;
+  --color-accent-soft: rgba(212, 168, 83, 0.12);
+
+  /* 颜色 - 助手品牌色 */
+  --color-assistant-writer: #e8a87c;
+  --color-assistant-coder: #7fb3d5;
+  --color-assistant-researcher: #a8d5ba;
+  --color-assistant-creator: #c9a8d4;
+
+  /* 颜色 - 功能色 */
+  --color-success: #5da36a;
+  --color-warning: #d4a853;
+  --color-error: #d46a6a;
+  --color-info: #6a9bd4;
+
+  /* 颜色 - 状态 */
+  --color-online: #5da36a;
+  --color-offline: #6c6c74;
+  --color-busy: #d4a853;
+  --color-error-bg: rgba(212, 106, 106, 0.1);
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* 字号 */
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-base: 14px;
+  --font-md: 15px;
+  --font-lg: 16px;
+  --font-xl: 18px;
+  --font-2xl: 22px;
+  --font-3xl: 28px;
+
+  /* 字重 */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* 阴影 - 极少用，保持扁平 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* 过渡 */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* 尺寸 */
+  --header-height: 48px;
+  --sidebar-width: 240px;
+  --trail-width: 280px;
+}

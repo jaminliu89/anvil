@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0",
+  "productName": "鲸团",
+  "version": "0.1.0",
+  "identifier": "com.liujunming.jingtuan",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "鲸团",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": false,
+        "transparent": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "你的第一个 AI 助手团队",
+    "longDescription": "鲸团是基于 DeepSeek Harness 的桌面 AI 助手应用。双击就能用，不用命令行，不用装环境。小文写文案，阿码写代码，小研做调研，小创打杂。你的 AI 团队，随时待命。",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {}
+}
