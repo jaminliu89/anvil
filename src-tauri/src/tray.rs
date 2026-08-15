@@ -3,7 +3,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Runtime,
+    AppHandle, Manager, Runtime,
 };
 
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), tauri::Error> {
@@ -29,11 +29,10 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), tauri::Error> {
         })
         .on_tray_icon_event(|tray, event| {
             if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                if let Some(app) = tray.app_handle() {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                let app = tray.app_handle().clone();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
             }
         })

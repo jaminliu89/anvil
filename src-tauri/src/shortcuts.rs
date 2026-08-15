@@ -1,6 +1,6 @@
 //! 全局快捷键
 
-use tauri::{Manager, Runtime};
+use tauri::Runtime;
 
 /// 注册全局快捷键
 pub fn setup_shortcuts<R: Runtime>(

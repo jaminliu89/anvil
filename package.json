@@ -1,10 +1,10 @@
 {
-  "name": "jingtuan",
-  "productName": "鲸团",
+  "name": "anvil",
+  "productName": "Anvil",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "你的第一个 AI 助手团队 · 基于 DeepSeek Harness 的桌面端",
+  "description": "Anvil · 本地 AI 工作站",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",

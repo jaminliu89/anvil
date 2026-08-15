@@ -1,8 +1,6 @@
 // Anvil · Tauri 应用库入口
 // 注册插件、commands、系统托盘、全局快捷键
 
-use tauri::Manager;
-
 pub mod dsh;
 pub mod tray;
 pub mod shortcuts;
@@ -28,14 +26,13 @@ pub fn run() {
             dsh::commands::dsh_start,
             dsh::commands::dsh_stop,
             dsh::commands::dsh_status,
-            dsh::commands::dsh_port,
+            dsh::commands::dsh_set_target,
             system_commands::toggle_window,
             system_commands::quit_app,
         ])
         // ====== 窗口事件：关闭 → 最小化到托盘 ======
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // 不退出，隐藏到托盘
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -44,11 +41,11 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
 
-            // 初始化 DSH 管理器
+            // 初始化 sidecar 管理器（守卫服务）
             dsh::manager::init(handle)?;
 
             // 系统托盘
-            tray::setup_tray(handle)?;
+            tray::create_tray(handle)?;
 
             // 全局快捷键
             shortcuts::setup_shortcuts(handle)?;
@@ -56,5 +53,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running jingtuan application");
+        .expect("error while running Anvil");
 }

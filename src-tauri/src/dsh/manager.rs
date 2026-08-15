@@ -1,5 +1,6 @@
-//! DSH 进程管理器
-//! 负责启动/停止/监控 DSH sidecar 进程
+//! Sidecar 进程管理器
+//! 启动/停止/监控 Anvil sidecar（bridge.py，包 DSH 守卫）
+//! 推理目标端点可路由：:18080（Ling-tiny）或 :8888（Unsloth）
 
 use std::process::Child;
 use std::sync::Mutex;
@@ -9,9 +10,11 @@ use once_cell::sync::Lazy;
 use tauri::Emitter;
 use tokio::time::sleep;
 
-/// DSH 进程状态
+pub const SIDECAR_PORT: u16 = 18443;
+
+/// Sidecar 状态
 #[derive(Debug, Clone, PartialEq)]
-pub enum DshStatus {
+pub enum SidecarStatus {
     Idle,
     Starting,
     Running { port: u16 },
@@ -19,23 +22,27 @@ pub enum DshStatus {
     Error { message: String },
 }
 
-/// 全局 DSH 管理器
-pub struct DshManager {
-    status: Mutex<DshStatus>,
+/// 全局管理器
+pub struct SidecarManager {
+    status: Mutex<SidecarStatus>,
     child: Mutex<Option<Child>>,
     port: Mutex<Option<u16>>,
+    target: Mutex<String>,
 }
 
-impl DshManager {
+impl SidecarManager {
+    const DEFAULT_TARGET: &'static str = "http://localhost:18080/v1";
+
     const fn new() -> Self {
         Self {
-            status: Mutex::new(DshStatus::Idle),
+            status: Mutex::new(SidecarStatus::Idle),
             child: Mutex::new(None),
             port: Mutex::new(None),
+            target: Mutex::new(String::new()),
         }
     }
 
-    pub fn get_status(&self) -> DshStatus {
+    pub fn get_status(&self) -> SidecarStatus {
         self.status.lock().unwrap().clone()
     }
 
@@ -43,102 +50,105 @@ impl DshManager {
         *self.port.lock().unwrap()
     }
 
-    fn set_status(&self, status: DshStatus) {
+    pub fn get_target(&self) -> String {
+        let t = self.target.lock().unwrap().clone();
+        if t.is_empty() { Self::DEFAULT_TARGET.to_string() } else { t }
+    }
+
+    /// 切换推理目标端点（重启 sidecar 生效）
+    pub async fn set_target(&self, target: String) -> Result<(), String> {
+        *self.target.lock().unwrap() = target;
+        let _ = self.stop();
+        self.start().await.map(|_| ())
+    }
+
+    fn set_status(&self, status: SidecarStatus) {
         *self.status.lock().unwrap() = status.clone();
-        if let DshStatus::Running { port } = status {
+        if let SidecarStatus::Running { port } = status {
             *self.port.lock().unwrap() = Some(port);
         }
     }
 
-    /// 启动 DSH 进程
+    /// 启动 sidecar（bridge.py）
     pub async fn start(&self) -> Result<u16, String> {
-        // 防止重复启动
         {
             let status = self.status.lock().unwrap();
             match *status {
-                DshStatus::Running { .. } => {
+                SidecarStatus::Running { .. } => {
                     return Ok(self.port.lock().unwrap().unwrap_or(0));
                 }
-                DshStatus::Starting => {
-                    return Err("DSH 正在启动中".into());
+                SidecarStatus::Starting => {
+                    return Err("守卫服务正在启动中".into());
                 }
                 _ => {}
             }
         }
 
-        self.set_status(DshStatus::Starting);
+        self.set_status(SidecarStatus::Starting);
 
-        // 分配端口
-        let port = match crate::dsh::port::find_available_port() {
-            Ok(p) => p,
-            Err(e) => {
-                self.set_status(DshStatus::Error {
-                    message: format!("端口分配失败: {}", e),
-                });
-                return Err(format!("端口分配失败: {}", e));
-            }
+        // 若端口已被占用且健康，直接复用（dev 模式手跑的 sidecar）
+        if is_port_ready(SIDECAR_PORT) {
+            self.set_status(SidecarStatus::Running { port: SIDECAR_PORT });
+            return Ok(SIDECAR_PORT);
+        }
+
+        let target = self.get_target();
+
+        // 开发模式：源码路径；打包后：resource 目录
+        let script_dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sidecar/bridge.py");
+        let script = if script_dev.exists() {
+            script_dev
+        } else {
+            // 打包形态： Contents/Resources/sidecar/bridge.py
+            std::path::PathBuf::from("sidecar/bridge.py")
         };
 
-        // 获取 DSH home 目录（app data 目录）
-        // MVP：先用临时目录，后续接入 Tauri path API
-        let dsh_home = std::env::temp_dir()
-            .join("jingtuan-dsh")
-            .to_string_lossy()
-            .to_string();
+        let python = find_python();
 
-        // 启动 DSH web profile
-        let child = std::process::Command::new("npx")
-            .arg("@deepseek-ai/dsh")
-            .arg("web")
+        let child = std::process::Command::new(&python)
+            .arg(script.to_string_lossy().to_string())
             .arg("--port")
-            .arg(port.to_string())
-            .arg("--host")
-            .arg("127.0.0.1")
-            .env("DSH_HOME", &dsh_home)
+            .arg(SIDECAR_PORT.to_string())
+            .arg("--target")
+            .arg(&target)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                let msg = format!("启动 DSH 失败: {}", e);
-                self.set_status(DshStatus::Error {
-                    message: msg.clone(),
-                });
+                let msg = format!("启动守卫服务失败: {}", e);
+                self.set_status(SidecarStatus::Error { message: msg.clone() });
                 msg
             })?;
 
-        // 保存进程句柄
         *self.child.lock().unwrap() = Some(child);
 
-        // 健康检查：最多等 30 秒
+        // 健康检查：最多 30 秒
         let max_retries = 60;
         let mut retries = 0;
         loop {
             if retries >= max_retries {
-                self.set_status(DshStatus::Error {
-                    message: "DSH 启动超时（30秒内未就绪）".into(),
+                self.set_status(SidecarStatus::Error {
+                    message: "守卫服务启动超时".into(),
                 });
-                // 杀掉卡住的进程
                 self.kill_child();
-                return Err("DSH 启动超时".into());
+                return Err("守卫服务启动超时".into());
             }
 
-            if is_port_ready(port) {
+            if is_port_ready(SIDECAR_PORT) {
                 break;
             }
 
-            // 检查进程是否已经挂了
             {
                 let mut child_guard = self.child.lock().unwrap();
                 if let Some(ref mut child) = *child_guard {
                     match child.try_wait() {
                         Ok(Some(status)) => {
-                            let msg = format!("DSH 进程意外退出，退出码: {}", status);
-                            self.set_status(DshStatus::Error {
-                                message: msg.clone(),
-                            });
+                            let msg = format!("守卫服务意外退出: {}", status);
+                            self.set_status(SidecarStatus::Error { message: msg.clone() });
                             return Err(msg);
                         }
-                        Ok(None) => {} // 还在跑
+                        Ok(None) => {}
                         Err(_) => {}
                     }
                 }
@@ -148,15 +158,15 @@ impl DshManager {
             retries += 1;
         }
 
-        self.set_status(DshStatus::Running { port });
-        Ok(port)
+        self.set_status(SidecarStatus::Running { port: SIDECAR_PORT });
+        Ok(SIDECAR_PORT)
     }
 
-    /// 停止 DSH 进程
+    /// 停止
     pub fn stop(&self) -> Result<(), String> {
-        self.set_status(DshStatus::Stopping);
+        self.set_status(SidecarStatus::Stopping);
         self.kill_child();
-        self.set_status(DshStatus::Idle);
+        self.set_status(SidecarStatus::Idle);
         *self.port.lock().unwrap() = None;
         Ok(())
     }
@@ -171,9 +181,26 @@ impl DshManager {
     }
 }
 
-/// 检查端口是否就绪（HTTP 200）
+fn find_python() -> String {
+    // 依次尝试已知解释器（deepseek_harness 装在系统 Python）
+    for cand in [
+        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+        "/usr/bin/python3",
+        "python3",
+    ] {
+        if cand.starts_with('/') {
+            if std::path::Path::new(cand).exists() {
+                return cand.to_string();
+            }
+        } else {
+            return cand.to_string();
+        }
+    }
+    "python3".to_string()
+}
+
 fn is_port_ready(port: u16) -> bool {
-    let addr = format!("http://127.0.0.1:{}", port);
+    let addr = format!("http://127.0.0.1:{}/health", port);
     match ureq::get(&addr).timeout(Duration::from_secs(2)).call() {
         Ok(resp) => resp.status() == 200,
         Err(_) => false,
@@ -181,23 +208,21 @@ fn is_port_ready(port: u16) -> bool {
 }
 
 /// 全局单例
-pub static DSH_MANAGER: Lazy<DshManager> = Lazy::new(DshManager::new);
+pub static SIDECAR_MANAGER: Lazy<SidecarManager> = Lazy::new(SidecarManager::new);
 
-/// 初始化 DSH 管理器（异步启动）
+/// 初始化（异步启动）
 pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.clone();
 
-    // 后台异步启动 DSH
     tauri::async_runtime::spawn(async move {
-        match DSH_MANAGER.start().await {
+        match SIDECAR_MANAGER.start().await {
             Ok(port) => {
-                log::info!("DSH 启动成功，端口: {}", port);
-                // 发送事件给前端
-                let _ = app_handle.emit("dsh-ready", port);
+                log::info!("sidecar ready on {}", port);
+                let _ = app_handle.emit("sidecar-ready", port);
             }
             Err(e) => {
-                log::error!("DSH 启动失败: {}", e);
-                let _ = app_handle.emit("dsh-error", e);
+                log::error!("sidecar failed: {}", e);
+                let _ = app_handle.emit("sidecar-error", e);
             }
         }
     });

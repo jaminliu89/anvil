@@ -28,7 +28,7 @@ pub fn toggle_window(app: tauri::AppHandle) -> Result<bool, String> {
 /// 退出应用（关窗只是藏到托盘，真退出用这个）
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {
-    // 先停 DSH
-    let _ = dsh::manager::DSH_MANAGER.stop();
+    // 先停 sidecar
+    let _ = dsh::manager::SIDECAR_MANAGER.stop();
     app.exit(0);
 }
