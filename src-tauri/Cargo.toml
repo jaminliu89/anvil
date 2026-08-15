@@ -1,5 +1,5 @@
 [package]
-name = "jingtuan"
+name = "anvil"
 version = "0.1.0"
 description = "鲸团 · 你的第一个 AI 助手团队"
 authors = ["柳俊明工作室"]
@@ -8,7 +8,7 @@ edition = "2021"
 rust-version = "1.78"
 
 [lib]
-name = "jingtuan_lib"
+name = "anvil_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

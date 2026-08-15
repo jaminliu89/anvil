@@ -1,4 +1,4 @@
-// 鲸团 · Tauri 应用库入口
+// Anvil · Tauri 应用库入口
 // 注册插件、commands、系统托盘、全局快捷键
 
 use tauri::Manager;

@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — Local AI Workstation</title>
+<style>
+:root {
+  --canvas: #F4F1EA;
+  --surface: #FAF8F3;
+  --raised: #FFFDF8;
+  --line: #D9D4CA;
+  --ink: #181816;
+  --ink2: #3C3B37;
+  --ink3: #706D65;
+  --ink4: #9A968C;
+  --signal: #655D52;
+  --signalSoft: #ECE7DE;
+  --success: #50634F;
+  --accent: #655D52;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-base: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.375rem;
+  --fs-2xl: 1.75rem;
+  --fs-3xl: 2.25rem;
+  --fs-4xl: 3rem;
+  --fs-5xl: 4rem;
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --radius: 9px;
+  --radius-surface: 12px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  line-height: 1.6;
+}
+.container { max-width: 960px; margin: 0 auto; padding: 0 var(--space-lg); }
+
+/* typography */
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+h1 { font-size: var(--fs-4xl); }
+h2 { font-size: var(--fs-2xl); margin-bottom: var(--space-lg); }
+h3 { font-size: var(--fs-xl); margin-bottom: var(--space-sm); }
+.subtitle { font-size: var(--fs-lg); color: var(--ink3); font-weight: 400; }
+.label { font-size: var(--fs-xs); color: var(--ink4); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; margin-bottom: var(--space-sm); }
+p, li { font-size: var(--fs-base); color: var(--ink2); }
+a { color: var(--signal); text-decoration: none; }
+
+/* sections */
+section { padding: var(--space-3xl) 0; }
+section + section { border-top: 1px solid var(--line); }
+
+/* hero */
+.hero { padding: var(--space-3xl) 0 var(--space-2xl); }
+.hero .label { color: var(--ink4); }
+.hero h1 { margin: var(--space-sm) 0 var(--space-md); }
+.hero .subtitle { max-width: 560px; margin-bottom: var(--space-xl); }
+
+/* stats row */
+.stats { display: flex; gap: var(--space-xl); margin: var(--space-xl) 0; flex-wrap: wrap; }
+.stat { }
+.stat-num { font-size: var(--fs-3xl); font-weight: 700; letter-spacing: -0.03em; color: var(--ink); }
+.stat-label { font-size: var(--fs-sm); color: var(--ink4); margin-top: var(--space-xs); }
+
+/* personas grid */
+.persona-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-lg); }
+@media (max-width: 640px) { .persona-grid { grid-template-columns: 1fr; } }
+.persona-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  padding: var(--space-lg);
+}
+.persona-role { font-size: var(--fs-lg); font-weight: 600; margin-bottom: var(--space-xs); }
+.persona-desc { font-size: var(--fs-sm); color: var(--ink3); margin-bottom: var(--space-md); }
+.persona-need { font-size: var(--fs-sm); color: var(--ink2); }
+
+/* tiers */
+.tier-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-lg); }
+@media (max-width: 720px) { .tier-grid { grid-template-columns: 1fr; } }
+.tier-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  padding: var(--space-lg);
+  position: relative;
+}
+.tier-card.recommended {
+  border-color: var(--signal);
+  background: #F8F6F2;
+}
+.tier-badge {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--signal);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: var(--space-xs) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.tier-name { font-size: var(--fs-xl); font-weight: 600; margin-bottom: var(--space-xs); }
+.tier-time { font-size: var(--fs-sm); color: var(--ink4); margin-bottom: var(--space-md); }
+.tier-desc { font-size: var(--fs-sm); color: var(--ink3); margin-bottom: var(--space-md); }
+.tier-features { list-style: none; }
+.tier-features li {
+  font-size: var(--fs-sm);
+  color: var(--ink2);
+  padding: var(--space-xs) 0;
+  position: relative;
+  padding-left: var(--space-lg);
+}
+.tier-features li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+/* decision matrix */
+.decision-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.decision-table th {
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  font-weight: 500;
+  color: var(--ink4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.decision-table td {
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink2);
+}
+.decision-table tr:last-child td { border-bottom: none; }
+.decision-table .check { color: var(--success); }
+.decision-table .dash { color: var(--ink4); }
+
+/* code */
+code {
+  font-family: "DM Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.875em;
+  background: var(--signalSoft);
+  color: var(--ink);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+pre {
+  background: #2A2826;
+  color: #EDE9E0;
+  font-family: "DM Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: var(--fs-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-surface);
+  overflow-x: auto;
+  line-height: 1.7;
+}
+
+/* roadmap */
+.phase + .phase { margin-top: var(--space-xl); }
+.phase-header { display: flex; align-items: baseline; gap: var(--space-md); margin-bottom: var(--space-sm); }
+.phase-num { font-size: var(--fs-xs); color: var(--ink4); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+.phase-title { font-size: var(--fs-lg); font-weight: 600; }
+.phase-status { font-size: var(--fs-xs); color: var(--ink4); }
+.phase-items { padding-left: var(--space-lg); list-style: none; }
+.phase-items li {
+  font-size: var(--fs-sm);
+  color: var(--ink2);
+  padding: var(--space-xs) 0;
+  position: relative;
+  padding-left: var(--space-lg);
+}
+.phase-items li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink4);
+}
+.phase-items li.done { color: var(--ink4); }
+.phase-items li.done::before { background: var(--ink4); }
+
+/* footer */
+.footer { padding: var(--space-xl) 0; text-align: center; font-size: var(--fs-sm); color: var(--ink4); }
+
+/* responsive tweaks */
+@media (max-width: 480px) {
+  h1 { font-size: var(--fs-3xl); }
+  .container { padding: 0 var(--space-md); }
+}
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="container">
+    <div class="label">Product Vision</div>
+    <h1>Forge</h1>
+    <p class="subtitle">Local AI Workstation<br>把 Mac 变成一台本地 AI 开发工作站。</p>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">3 min</div>
+        <div class="stat-label">最小方案从零到推理</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">$0</div>
+        <div class="stat-label">每 token 推理费用</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">Offline</div>
+        <div class="stat-label">完全离线可用</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">3 端</div>
+        <div class="stat-label">Claude / Codex / Hermes</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">What &amp; Why</div>
+    <h2>Forge 是什么</h2>
+    <p style="max-width:680px; margin-bottom:var(--space-lg);">
+      一套整合式开源方案，把 M 芯片 Mac 变成本地 AI 开发工作站。跑推理、接 Agent、离线可用、零 API 费用。
+    </p>
+    <p style="max-width:680px; color:var(--ink3); font-size:var(--fs-sm);">
+      对比 Ollama、LM Studio、GPT4All 等竞品，Forge 的核心差异不是又多一个模型管理器——而是<strong>面向 Agent 开发场景做端到端集成</strong>：全 GPU 加速推理 + 64K 上下文 + Claude Code/Codex 桥接 + Hermes fallback 链路，开箱即用。
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Personas</div>
+    <h2>为谁而做</h2>
+    <div class="persona-grid">
+      <div class="persona-card">
+        <div class="persona-role">独立开发者</div>
+        <div class="persona-desc">一人工作室，用 AI 辅助写代码</div>
+        <div class="persona-need">不想交 API 账单，要本地推理不卡生产力</div>
+      </div>
+      <div class="persona-card">
+        <div class="persona-role">隐私敏感开发者</div>
+        <div class="persona-desc">写闭源项目、合规审查、离线办公</div>
+        <div class="persona-need">代码不能出本机，又要 AI 能力不掉线</div>
+      </div>
+      <div class="persona-card">
+        <div class="persona-role">AI 应用开发者</div>
+        <div class="persona-desc">做 Agent、RAG pipeline、模型调优</div>
+        <div class="persona-need">本地稳定推理 + 多模型管理 + 训练能力</div>
+      </div>
+      <div class="persona-card">
+        <div class="persona-role">AI 学习者</div>
+        <div class="persona-desc">在学 LLM 部署、微调、Agent 开发</div>
+        <div class="persona-need">低门槛上手，看得见全链路，不被云端黑盒</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Tiers</div>
+    <h2>三档方案，按需选择</h2>
+    <div class="tier-grid">
+      <div class="tier-card">
+        <div class="tier-badge">3 min</div>
+        <div class="tier-name">A · 纯推理</div>
+        <div class="tier-time">从零到跑通 3 分钟</div>
+        <div class="tier-desc">终端里直接跑推理，最低成本验证</div>
+        <ul class="tier-features">
+          <li>Ling-3.0-tiny q4 本地推理</li>
+          <li>64K 上下文，全 GPU offload</li>
+          <li>CURL / API 直接调用</li>
+          <li>终端交互（scripts/ling）</li>
+        </ul>
+      </div>
+      <div class="tier-card recommended">
+        <div class="tier-badge">5 min (推荐)</div>
+        <div class="tier-name">B · Agent 桥接</div>
+        <div class="tier-time">本地 + Agent 链路 5 分钟</div>
+        <div class="tier-desc">本地推理 + Agent 自动 fallback，日常开发的黄金档</div>
+        <ul class="tier-features">
+          <li>A 全部功能</li>
+          <li>Hermes Ling fallback 自动切换</li>
+          <li>Claude Code / Codex 直连本地模型</li>
+          <li>模型健康探活 + 自动恢复</li>
+        </ul>
+      </div>
+      <div class="tier-card">
+        <div class="tier-badge">10 min</div>
+        <div class="tier-name">C · 全栈工作站</div>
+        <div class="tier-time">全功能部署 10 分钟</div>
+        <div class="tier-desc">完整的本地 AI 开发工作站，从推理到训练全链路</div>
+        <ul class="tier-features">
+          <li>B 全部功能</li>
+          <li>Unsloth Desktop 模型管理面板</li>
+          <li>本地微调（LoRA/QLoRA）</li>
+          <li>多模型切换 + Agent 桥接</li>
+          <li>GUI 管理面板 (dsh-gui)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Architecture</div>
+    <h2>系统架构</h2>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:var(--space-lg); margin-bottom:var(--space-lg);">
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-surface); padding:var(--space-lg);">
+        <div style="font-size:var(--fs-sm); font-weight:600; margin-bottom:var(--space-md);">应用层</div>
+        <div style="font-size:var(--fs-sm); color:var(--ink3); padding-left:var(--space-md); border-left:2px solid var(--signal);">
+          dsh-gui (Tauri) — 桌面管理面板
+        </div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-surface); padding:var(--space-lg);">
+        <div style="font-size:var(--fs-sm); font-weight:600; margin-bottom:var(--space-md);">服务层</div>
+        <div style="font-size:var(--fs-sm); color:var(--ink3); padding-left:var(--space-md); border-left:2px solid var(--signal);">
+          DeepSeek Harness (:3080) / llama-server (:18080) / Unsloth Desktop (:11434)
+        </div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-surface); padding:var(--space-lg);">
+        <div style="font-size:var(--fs-sm); font-weight:600; margin-bottom:var(--space-md);">Agent 层</div>
+        <div style="font-size:var(--fs-sm); color:var(--ink3); padding-left:var(--space-md); border-left:2px solid var(--signal);">
+          Claude Code / Codex CLI / Hermes Agent 直连或桥接
+        </div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-surface); padding:var(--space-lg);">
+        <div style="font-size:var(--fs-sm); font-weight:600; margin-bottom:var(--space-md);">推理层</div>
+        <div style="font-size:var(--fs-sm); color:var(--ink3); padding-left:var(--space-md); border-left:2px solid var(--signal);">
+          Ling-3.0-tiny (bailingmoe3) / llama.cpp · 全 GPU 加速 · 64K ctx
+        </div>
+      </div>
+    </div>
+    <p style="font-size:var(--fs-sm); color:var(--ink3);">
+      四层架构，每层可独立替换。<br>
+      推理走本地 Ling → 云端 DeepSeek fallback；Agent 直连推理端点，不经过中间层。
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Decision Guide</div>
+    <h2>什么时候用什么</h2>
+    <table class="decision-table">
+      <thead>
+        <tr>
+          <th>场景</th>
+          <th>推荐方案</th>
+          <th>费用</th>
+          <th>延迟</th>
+          <th>离线</th>
+          <th>工具调用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>日常代码补全/问答</td>
+          <td>Ling 本地推理</td>
+          <td><span class="check">$0</span></td>
+          <td>低</td>
+          <td><span class="check">是</span></td>
+          <td><span class="dash">-</span></td>
+        </tr>
+        <tr>
+          <td>复杂 Agent 任务</td>
+          <td>云端 API 主 + Ling fallback</td>
+          <td>按量</td>
+          <td>中</td>
+          <td><span class="check">fallback</span></td>
+          <td><span class="check">完整</span></td>
+        </tr>
+        <tr>
+          <td>离线 / 网络受限</td>
+          <td>Ling-only Agent 模式</td>
+          <td><span class="check">$0</span></td>
+          <td>低</td>
+          <td><span class="check">是</span></td>
+          <td>基础</td>
+        </tr>
+        <tr>
+          <td>微调 / 训练</td>
+          <td>Unsloth Desktop (C档)</td>
+          <td><span class="check">本地</span></td>
+          <td>高(训练)</td>
+          <td><span class="check">是</span></td>
+          <td><span class="dash">-</span></td>
+        </tr>
+        <tr>
+          <td>原型验证 / 快速试错</td>
+          <td>terminal 直调 Ling</td>
+          <td><span class="check">$0</span></td>
+          <td>低</td>
+          <td><span class="check">是</span></td>
+          <td><span class="dash">-</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Quick Start</div>
+    <h2>三分钟起步</h2>
+    <pre># A档：终端里直接跑推理
+curl :18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"ling","messages":[{"role":"user","content":"hello"}]}'
+
+# B档：装 Hermes fallback（自动切换）
+hermes config set fallback.url http://127.0.0.1:18080/v1
+hermes config set fallback.model ling
+
+# C档：装 Unsloth + dsh-gui
+brew install unsloth  # 或 pip install unsloth
+cd dsh-gui && cargo tauri dev</pre>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Roadmap</div>
+    <h2>产品路线图</h2>
+    <div class="phase">
+      <div class="phase-header">
+        <span class="phase-num">Phase 1</span>
+        <span class="phase-title">基础到位</span>
+        <span class="phase-status">已完成</span>
+      </div>
+      <ul class="phase-items">
+        <li class="done">Ling-3.0-tiny 本地推理</li>
+        <li class="done">llama.cpp 编译 + 全 GPU offload</li>
+        <li class="done">launchd 自启 + 探活脚本</li>
+        <li class="done">Hermes Ling-fallback 配置</li>
+        <li class="done">文档体系（架构/部署/集成）</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="phase-header">
+        <span class="phase-num">Phase 2</span>
+        <span class="phase-title">桌面管理</span>
+        <span class="phase-status">进行中</span>
+      </div>
+      <ul class="phase-items">
+        <li>dsh-gui Tauri 面板（模型状态/切换/日志）</li>
+        <li>Unsloth Desktop 集成安装脚本</li>
+        <li>Agent 一键桥接（Claude Code / Codex / Hermes）</li>
+        <li>三端同步发布 CI</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="phase-header">
+        <span class="phase-num">Phase 3</span>
+        <span class="phase-title">一键部署</span>
+        <span class="phase-status">规划中</span>
+      </div>
+      <ul class="phase-items">
+        <li>Brew formula / DMG 一键安装</li>
+        <li>模型下载器（从 HF 自动拉取）</li>
+        <li>GUI 管理面板打包分发</li>
+        <li>多模型运行时管理</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="phase-header">
+        <span class="phase-num">Phase 4</span>
+        <span class="phase-title">生态开放</span>
+        <span class="phase-status">远期</span>
+      </div>
+      <ul class="phase-items">
+        <li>Plugin 机制（自定义推理后端）</li>
+        <li>训练结果一键导出 Agent 格式</li>
+        <li>社区模型市场</li>
+        <li>Windows/Linux 支持</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="label">Brand</div>
+    <h2>名字怎么来的</h2>
+    <p style="max-width:560px; font-size:var(--fs-sm); color:var(--ink3);">
+      <strong>Forge</strong> — 锻造。这个名字来自一个意象：本地 Mac 像一个锻造炉，开发者把数据、模型、代码放进去，锻造成成品。<br><br>
+      不是"又一个模型管理器"，而是"你的本地 AI 锻造车间"。不依赖云端，不产生 API 费用，所有锻造过程都在本机完成。
+    </p>
+  </div>
+</section>
+
+<div class="footer">
+  <div class="container">
+    Forge &mdash; Local AI Workstation · 开源 · M 芯片 Mac
+  </div>
+</div>
+
+</body>
+</html>

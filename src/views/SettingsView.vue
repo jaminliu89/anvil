@@ -1,468 +1,292 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
-import { invoke } from '@tauri-apps/api/core'
 
-const router = useRouter()
 const settingsStore = useSettingsStore()
 
-const apiKeyInput = ref('')
-const apiBaseUrlInput = ref('')
-const autostart = ref(false)
-const shortcutEnabled = ref(false)
-const themeInput = ref<'dark' | 'light' | 'system'>('dark')
-const saved = ref(false)
-const ready = ref(false)
+const theme = ref<'light' | 'dark'>('light')
+const autostart = ref(true)
+const autoLaunchAi = ref(true)
+const notifications = ref(true)
 
 onMounted(async () => {
   await settingsStore.load()
-  ready.value = true
-  apiKeyInput.value = settingsStore.apiKey
-  apiBaseUrlInput.value = settingsStore.apiBaseUrl
-  autostart.value = settingsStore.autoStart
-  shortcutEnabled.value = settingsStore.globalShortcutEnabled
-  themeInput.value = settingsStore.theme
+  theme.value = settingsStore.theme || 'light'
 })
-
-function back() {
-  router.back()
-}
-
-async function saveApiKey() {
-  settingsStore.apiKey = apiKeyInput.value.trim()
-  await settingsStore.save()
-  showSaved()
-}
-
-async function saveApiBaseUrl() {
-  settingsStore.apiBaseUrl = apiBaseUrlInput.value.trim()
-  await settingsStore.save()
-  showSaved()
-}
-
-async function toggleAutostart() {
-  settingsStore.autoStart = autostart.value
-  await settingsStore.save()
-  try {
-    await invoke('set_autostart', { enabled: autostart.value })
-  } catch (e) {
-    console.warn('set autostart failed', e)
-  }
-  showSaved()
-}
-
-async function toggleShortcut() {
-  settingsStore.globalShortcutEnabled = shortcutEnabled.value
-  await settingsStore.save()
-  try {
-    await invoke('set_global_shortcut', { enabled: shortcutEnabled.value })
-  } catch (e) {
-    console.warn('set shortcut failed', e)
-  }
-  showSaved()
-}
-
-async function saveTheme() {
-  settingsStore.theme = themeInput.value
-  await settingsStore.save()
-  showSaved()
-}
-
-function showSaved() {
-  saved.value = true
-  setTimeout(() => { saved.value = false }, 1500)
-}
-
-async function quitApp() {
-  try {
-    await invoke('quit_app')
-  } catch (e) {
-    console.warn('quit failed', e)
-  }
-}
 </script>
 
 <template>
-  <div class="view" v-if="ready">
-    <!-- 标题栏 -->
-    <header class="titlebar" data-tauri-drag-region>
-      <div class="titlebar-left">
-        <button class="back-btn" @click="back">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
-        <span class="back-text">返回</span>
-      </div>
-      <div class="titlebar-center" data-tauri-drag-region>
-        <span class="page-title">设置</span>
-      </div>
-      <div class="titlebar-right">
-        <span class="save-indicator" :class="{ visible: saved }">已保存</span>
-      </div>
-    </header>
+  <div class="view">
+    <div class="page-head">
+      <h1 class="page-title">设置</h1>
+    </div>
 
-    <!-- 主体 -->
-    <main class="main">
-      <div class="panel">
-
-        <div class="group">
-          <div class="group-title">AI 服务</div>
-          <div class="group-body">
-            <div class="row">
-              <div class="row-label">
-                <span class="label-text">API Key</span>
-                <span class="label-sub">DeepSeek API Key</span>
-              </div>
-              <input
-                type="password"
-                v-model="apiKeyInput"
-                class="row-input"
-                placeholder="sk-..."
-                @blur="saveApiKey"
-                @keyup.enter="saveApiKey"
-              />
+    <div class="settings">
+      <!-- 通用 -->
+      <div class="section">
+        <div class="section-label">通用</div>
+        <div class="setting-list">
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-name">开机自启</span>
+              <span class="setting-desc">登录 Mac 后自动打开 Anvil</span>
             </div>
-            <div class="row">
-              <div class="row-label">
-                <span class="label-text">接口地址</span>
-                <span class="label-sub">自定义 API Base URL</span>
-              </div>
-              <input
-                type="text"
-                v-model="apiBaseUrlInput"
-                class="row-input"
-                placeholder="https://api.deepseek.com"
-                @blur="saveApiBaseUrl"
-                @keyup.enter="saveApiBaseUrl"
-              />
+            <label class="switch">
+              <input type="checkbox" v-model="autostart" />
+              <span class="switch-track"></span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-name">自动运行</span>
+              <span class="setting-desc">打开 Anvil 后自动启动 AI</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" v-model="autoLaunchAi" />
+              <span class="switch-track"></span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-name">通知</span>
+              <span class="setting-desc">运行状态变化时发送通知</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" v-model="notifications" />
+              <span class="switch-track"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 外观 -->
+      <div class="section">
+        <div class="section-label">外观</div>
+        <div class="setting-list">
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-name">主题</span>
+              <span class="setting-desc">亮色 / 暗色</span>
+            </div>
+            <div class="theme-toggle">
+              <button
+                class="theme-btn"
+                :class="{ active: theme === 'light' }"
+                @click="theme = 'light'"
+              >亮色</button>
+              <button
+                class="theme-btn"
+                :class="{ active: theme === 'dark' }"
+                @click="theme = 'dark'"
+              >暗色</button>
             </div>
           </div>
         </div>
+      </div>
 
-        <div class="group">
-          <div class="group-title">通用</div>
-          <div class="group-body">
-            <div class="row">
-              <div class="row-label">
-                <span class="label-text">开机自启</span>
-                <span class="label-sub">登录后自动启动鲸团</span>
-              </div>
-              <div class="switch" :class="{ on: autostart }" @click="toggleAutostart">
-                <div class="thumb"></div>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-label">
-                <span class="label-text">全局快捷键</span>
-                <span class="label-sub">⌥␣ 快速唤起 / 隐藏</span>
-              </div>
-              <div class="switch" :class="{ on: shortcutEnabled }" @click="toggleShortcut">
-                <div class="thumb"></div>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-label">
-                <span class="label-text">外观</span>
-                <span class="label-sub">深色 / 浅色 / 跟随系统</span>
-              </div>
-              <div class="segmented">
-                <div
-                  class="seg-item"
-                  :class="{ active: themeInput === 'dark' }"
-                  @click="themeInput = 'dark'; saveTheme()"
-                >深色</div>
-                <div
-                  class="seg-item"
-                  :class="{ active: themeInput === 'light' }"
-                  @click="themeInput = 'light'; saveTheme()"
-                >浅色</div>
-                <div
-                  class="seg-item"
-                  :class="{ active: themeInput === 'system' }"
-                  @click="themeInput = 'system'; saveTheme()"
-                >跟随</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-title">关于</div>
-          <div class="group-body">
-            <div class="row static">
-              <div class="row-label">
-                <span class="label-text">版本</span>
-              </div>
-              <span class="row-value">0.1.0</span>
-            </div>
-            <div class="row clickable" @click="quitApp">
-              <div class="row-label">
-                <span class="label-text danger">退出鲸团</span>
-              </div>
-              <svg class="row-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
+      <!-- 关于 -->
+      <div class="section">
+        <div class="section-label">关于</div>
+        <div class="setting-list">
+          <div class="setting-item about-item">
+            <div class="about-logo">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
             </div>
+            <div class="about-info">
+              <span class="about-name">Anvil</span>
+              <span class="about-ver">v0.1.0</span>
+            </div>
+            <span class="about-desc">你的本地 AI 工作站</span>
           </div>
         </div>
-
       </div>
-    </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .view {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: var(--color-bg);
+  padding: var(--space-8) var(--space-8);
+  max-width: 560px;
 }
 
-/* 标题栏 */
-.titlebar {
-  height: var(--titlebar-height);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-4);
-  -webkit-app-region: drag;
-}
-
-.titlebar-left {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  -webkit-app-region: no-drag;
-}
-
-.back-btn {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.back-btn:hover {
-  color: var(--color-text);
-  background: var(--color-bg-tertiary);
-}
-
-.back-text {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-}
-
-.back-text:hover {
-  color: var(--color-text);
-}
-
-.titlebar-center {
-  flex: 1;
-  text-align: center;
+.page-head {
+  margin-bottom: var(--space-6);
 }
 
 .page-title {
-  font-size: var(--font-sm);
+  font-size: var(--font-lg);
   font-weight: var(--font-semibold);
-  color: var(--color-text-secondary);
+  letter-spacing: -0.01em;
 }
 
-.titlebar-right {
-  flex: 1;
-  text-align: right;
-  -webkit-app-region: no-drag;
-}
-
-.save-indicator {
-  font-size: var(--font-xs);
-  color: var(--color-success);
-  opacity: 0;
-  transition: opacity var(--transition-base);
-}
-
-.save-indicator.visible {
-  opacity: 1;
-}
-
-/* 主体 */
-.main {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-8) var(--space-10);
-  display: flex;
-  justify-content: center;
-}
-
-.panel {
-  width: 100%;
-  max-width: 440px;
+/* 设置分组 */
+.settings {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.group-title {
-  font-size: 10px;
+.section-label {
+  font-size: var(--font-2xs);
   font-weight: var(--font-semibold);
   color: var(--color-text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 0 var(--space-2);
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-3);
 }
 
-.group-body {
+.setting-list {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
-.row {
+.setting-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border-soft);
-  min-height: 44px;
 }
 
-.row:last-child {
+.setting-item:last-child {
   border-bottom: none;
 }
 
-.row.clickable {
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.row.clickable:hover {
-  background: var(--color-bg-tertiary);
-}
-
-.row-label {
+.setting-info {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 0;
 }
 
-.label-text {
+.setting-name {
   font-size: var(--font-sm);
-  font-weight: var(--font-regular);
+  font-weight: var(--font-medium);
   color: var(--color-text);
 }
 
-.label-text.danger {
-  color: var(--color-error);
-}
-
-.label-sub {
+.setting-desc {
   font-size: var(--font-2xs);
   color: var(--color-text-tertiary);
 }
 
-.row-input {
-  flex: 1;
-  max-width: 200px;
-  height: 26px;
-  padding: 0 var(--space-2);
-  font-size: var(--font-sm);
-  color: var(--color-text);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
-  text-align: right;
-  font-family: inherit;
-  transition: all var(--transition-fast);
-}
-
-.row-input:focus {
-  outline: none;
-  border-color: var(--color-border-strong);
-  background: var(--color-bg-elevated);
-}
-
-.row-value {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-}
-
-.row-chevron {
-  color: var(--color-text-muted);
-}
-
 /* 开关 */
 .switch {
+  position: relative;
   width: 36px;
-  height: 22px;
-  border-radius: 11px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-soft);
-  padding: 1px;
+  height: 20px;
   cursor: pointer;
-  transition: all var(--transition-base);
   flex-shrink: 0;
 }
 
-.switch .thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
   transition: all var(--transition-base);
 }
 
-.switch.on {
-  background: var(--color-signal-soft);
+.switch input:checked + .switch-track {
+  background: var(--color-signal);
   border-color: var(--color-signal);
 }
 
-.switch.on .thumb {
-  transform: translateX(14px);
-  background: var(--color-signal);
+.switch-track::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background: var(--color-bg);
+  border-radius: 50%;
+  transition: transform var(--transition-base);
 }
 
-/* 分段控件 */
-.segmented {
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+}
+
+/* 主题切换 */
+.theme-toggle {
   display: flex;
-  background: var(--color-bg-tertiary);
+  gap: 0;
+  border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-sm);
-  padding: 2px;
-  gap: 1px;
+  overflow: hidden;
 }
 
-.seg-item {
-  padding: 2px var(--space-2);
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  border-radius: 4px;
+.theme-btn {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-2xs);
+  font-weight: var(--font-medium);
+  font-family: inherit;
   cursor: pointer;
+  border: none;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg);
   transition: all var(--transition-fast);
 }
 
-.seg-item:hover {
-  color: var(--color-text-secondary);
+.theme-btn.active {
+  color: var(--color-bg);
+  background: var(--color-signal);
 }
 
-.seg-item.active {
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-weight: var(--font-medium);
+.theme-btn:first-child {
+  border-right: 1px solid var(--color-border-soft);
+}
+
+/* 关于 */
+.about-item {
+  gap: var(--space-3);
+}
+
+.about-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--color-signal-soft);
+  color: var(--color-signal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.about-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.about-name {
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
+}
+
+.about-ver {
+  font-size: var(--font-2xs);
+  color: var(--color-text-tertiary);
+}
+
+.about-desc {
+  font-size: var(--font-2xs);
+  color: var(--color-text-tertiary);
 }
 </style>
