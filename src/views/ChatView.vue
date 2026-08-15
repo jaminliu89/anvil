@@ -1,281 +1,260 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useTeamStore } from '@/stores/team'
-import { useDshStore } from '@/stores/dsh'
-import { getDshWebUrl, startDsh } from '@/services/dsh'
+// 对话页 — 所有消息经守卫，思考过程折叠展示
 
-const router = useRouter()
-const route = useRoute()
-const teamStore = useTeamStore()
+import { ref, nextTick, watch, onMounted } from 'vue'
+import { useDshStore } from '@/stores/dsh'
+import { chat, streamChat, estimate, type GuardedMessage } from '@/services/dsh'
+
+interface UiMessage {
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  elapsed?: number
+  cacheRate?: number
+  salvaged?: boolean
+}
+
 const dshStore = useDshStore()
 
+const messages = ref<UiMessage[]>([])
+const input = ref('')
+const busy = ref(false)
+const thinkOpen = ref<Record<number, boolean>>({})
+const estimateHint = ref('')
+const listEl = ref<HTMLElement | null>(null)
+
+function scrollBottom() {
+  nextTick(() => {
+    if (listEl.value) listEl.value.scrollTop = listEl.value.scrollHeight
+  })
+}
+
+watch(messages, scrollBottom, { deep: true })
+
+async function updateEstimate() {
+  const text = input.value.trim()
+  if (!text || messages.value.length === 0) {
+    estimateHint.value = ''
+    return
+  }
+  try {
+    const prev = messages.value.map((m) => ({ role: m.role, content: m.content }))
+    const est = await estimate(prev, [{ role: 'user', content: text }])
+    const rate = (est as { cache_hit_rate?: number }).cache_hit_rate
+    if (rate !== undefined) estimateHint.value = `预计命中缓存 ${(rate * 100).toFixed(0)}%`
+  } catch {
+    estimateHint.value = ''
+  }
+}
+
+async function send() {
+  const text = input.value.trim()
+  if (!text || busy.value) return
+  busy.value = true
+  estimateHint.value = ''
+  input.value = ''
+
+  messages.value.push({ role: 'user', content: text })
+  const assistant: UiMessage = { role: 'assistant', content: '' }
+  messages.value.push(assistant)
+
+  const history: GuardedMessage[] = messages.value
+    .slice(0, -1)
+    .map((m) => ({ role: m.role, content: m.content }))
+
+  const t0 = performance.now()
+  try {
+    await streamChat(
+      history,
+      {
+        onThinking: (t) => {
+          assistant.reasoning = (assistant.reasoning || '') + t
+          scrollBottom()
+        },
+        onDelta: (t) => {
+          assistant.content += t
+          scrollBottom()
+        },
+        onError: (err) => {
+          assistant.content += `\n\n[出错] ${err}`
+        },
+      },
+      { maxTokens: 2048 },
+    )
+  } catch (e) {
+    // 流式失败回退非流式
+    try {
+      const r = await chat(history, { maxTokens: 2048 })
+      assistant.content = r.message.content
+      assistant.reasoning = r.message.reasoning_content
+      assistant.cacheRate = r.usage?.cache_hit_rate
+      assistant.salvaged = r.salvaged
+    } catch (e2) {
+      assistant.content = `[出错] ${e2}`
+    }
+  }
+  assistant.elapsed = Number(((performance.now() - t0) / 1000).toFixed(1))
+  busy.value = false
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    send()
+  }
+}
+
 onMounted(() => {
-  const id = route.params.id as string
-  teamStore.setCurrentAssistant(id)
-  if (dshStore.status === 'idle' || dshStore.status === 'error') {
-    startDsh().catch(() => {})
-  }
+  dshStore.refresh()
 })
-
-const assistant = computed(() => teamStore.currentAssistant)
-
-const initial = computed(() => assistant.value?.name.charAt(0) || '?')
-
-const iframeUrl = computed(() => {
-  if (dshStore.port) {
-    return getDshWebUrl(dshStore.port)
-  }
-  return ''
-})
-
-const isLoading = computed(() => dshStore.status !== 'running')
-
-function retryStart() {
-  startDsh().catch(() => {})
-}
-
-function backToTeam() {
-  router.push('/')
-}
 </script>
 
 <template>
-  <div class="chat-view">
-    <!-- 顶栏（含拖拽区） -->
-    <header class="chat-header" data-tauri-drag-region>
-      <button class="back-btn" @click="backToTeam">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"></polyline>
-        </svg>
-      </button>
-
-      <div class="assistant-info">
-        <div class="avatar" :style="{ backgroundColor: (assistant?.color || '#666') + '20', color: assistant?.color }">
-          {{ initial }}
-        </div>
-        <div class="info-text">
-          <h2>{{ assistant?.name || '助手' }}</h2>
-          <span class="role">{{ assistant?.role }}</span>
-        </div>
+  <div class="view chat-view">
+    <div class="msg-list" ref="listEl">
+      <div v-if="messages.length === 0" class="empty">
+        <div class="empty-title">和你的本地 AI 说话</div>
+        <div class="empty-sub">全部本地运行 · 不联网 · 不留痕</div>
       </div>
 
-      <div class="header-spacer"></div>
+      <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
+        <!-- 思考折叠条 -->
+        <div v-if="m.reasoning" class="think" @click="thinkOpen[i] = !thinkOpen[i]">
+          <span class="think-label">{{ thinkOpen[i] ? '收起思考' : '展开思考' }}</span>
+        </div>
+        <pre v-if="m.reasoning && thinkOpen[i]" class="think-body">{{ m.reasoning }}</pre>
 
-      <div class="status-indicator" :class="dshStore.status">
-        <span class="dot"></span>
-        <span class="label">
-          {{ dshStore.status === 'running' ? '运行中' :
-             dshStore.status === 'starting' ? '启动中' :
-             dshStore.status === 'error' ? '异常' :
-             dshStore.status === 'stopping' ? '停止中' : '待机' }}
-        </span>
-      </div>
-    </header>
+        <div class="bubble">
+          <pre class="content">{{ m.content || (busy && i === messages.length - 1 ? '…' : '') }}</pre>
+        </div>
 
-    <!-- 内容 -->
-    <div class="chat-body">
-      <div v-if="isLoading" class="loading-overlay">
-        <div class="loading-content">
-          <div class="spinner-ring"></div>
-          <p class="loading-text">
-            {{ dshStore.status === 'starting' ? '正在启动助手…' :
-               dshStore.status === 'error' ? '启动失败' : '准备中' }}
-          </p>
-          <p v-if="dshStore.status === 'error'" class="error-text">
-            {{ dshStore.error }}
-          </p>
-          <button v-if="dshStore.status === 'error'" class="retry-btn" @click="retryStart">
-            重试
-          </button>
+        <div v-if="m.role === 'assistant' && m.elapsed" class="meta">
+          <span v-if="m.elapsed">{{ m.elapsed }}s</span>
+          <span v-if="m.cacheRate !== undefined">缓存 {{ (m.cacheRate * 100).toFixed(0) }}%</span>
+          <span v-if="m.salvaged">已修复</span>
         </div>
       </div>
+    </div>
 
-      <iframe
-        v-show="!isLoading"
-        :src="iframeUrl"
-        class="dsh-iframe"
-        frameborder="0"
-        title="对话"
-      ></iframe>
+    <div class="composer">
+      <div v-if="estimateHint" class="est">{{ estimateHint }}</div>
+      <div class="input-row">
+        <textarea
+          v-model="input"
+          @keydown="onKeydown"
+          @input="updateEstimate"
+          placeholder="输入消息，Enter 发送"
+          rows="2"
+        ></textarea>
+        <button class="send" @click="send" :disabled="busy || !input.trim()">{{ busy ? '…' : '发送' }}</button>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.msg-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.empty {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg);
-}
-
-.chat-header {
-  height: var(--titlebar-height);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--color-border-soft);
-  background: var(--color-bg);
-  -webkit-app-region: drag;
-  padding-left: 72px; /* 避开交通灯 */
-}
-
-.back-btn {
-  width: 24px;
-  height: 24px;
-  display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  -webkit-app-region: no-drag;
+  gap: 8px;
 }
+.empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
+.empty-sub { font-size: 13px; color: var(--ink3); }
 
-.back-btn:hover {
-  color: var(--color-text);
-  background: var(--color-bg-tertiary);
-}
+.msg { margin-bottom: 16px; max-width: 78%; }
+.msg.user { margin-left: auto; }
 
-.assistant-info {
-  display: flex;
+.think {
+  font-size: 12px;
+  color: var(--ink4);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 4px;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 4px;
+}
+.think-label { border-bottom: 1px dashed var(--ink4); padding-bottom: 1px; }
+
+.think-body {
+  font-size: 12px;
+  color: var(--ink3);
+  background: var(--signal-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 6px 0;
+  white-space: pre-wrap;
+  font-family: var(--font-ui);
+  max-height: 220px;
+  overflow-y: auto;
 }
 
-.avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
+.bubble {
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.msg.user .bubble { background: var(--signal); color: var(--paper); }
+.msg.assistant .bubble { background: var(--raised); border: 1px solid var(--line); color: var(--ink2); }
+
+.content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.meta {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-xs);
-  font-weight: var(--font-semibold);
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink4);
+  margin-top: 4px;
 }
 
-.info-text h2 {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  line-height: 1.2;
-}
+.composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.est { font-size: 11px; color: var(--ink4); margin-bottom: 6px; }
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
 
-.role {
-  display: none;
-}
-
-.header-spacer {
+textarea {
   flex: 1;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--raised);
+  color: var(--ink);
+  outline: none;
 }
+textarea:focus { border-color: var(--signal); }
 
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  -webkit-app-region: no-drag;
-}
-
-.status-indicator .dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.status-indicator.running {
-  color: var(--color-success);
-}
-
-.status-indicator.starting {
-  color: var(--color-warning);
-}
-
-.status-indicator.starting .dot {
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.status-indicator.error {
-  color: var(--color-error);
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
-.chat-body {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-}
-
-.dsh-iframe {
-  width: 100%;
-  height: 100%;
+.send {
   border: none;
-  background: #fff;
+  background: var(--signal);
+  color: var(--paper);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
 }
-
-.loading-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-bg);
-}
-
-.loading-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.spinner-ring {
-  width: 28px;
-  height: 28px;
-  border: 1.5px solid var(--color-border);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.loading-text {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-}
-
-.error-text {
-  font-size: var(--font-xs);
-  color: var(--color-error);
-  max-width: 320px;
-  text-align: center;
-  line-height: 1.5;
-}
-
-.retry-btn {
-  margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-5);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-sm);
-  color: var(--color-text);
-  transition: all var(--transition-fast);
-}
-
-.retry-btn:hover {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-border-strong);
-}
+.send:disabled { opacity: 0.4; cursor: default; }
 </style>

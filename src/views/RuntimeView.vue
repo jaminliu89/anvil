@@ -1,393 +1,106 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+// 运行页 — 大脑状态 + 体检
+
+import { ref, onMounted } from 'vue'
 import { useDshStore } from '@/stores/dsh'
-import { startDsh, stopDsh } from '@/services/dsh'
+import { doctor, type DoctorResult } from '@/services/dsh'
 
 const dshStore = useDshStore()
+const doc = ref<DoctorResult | null>(null)
+const checking = ref(false)
+const switching = ref(false)
 
-const isRunning = computed(() => dshStore.status === 'running')
-const isBusy = computed(() => dshStore.status === 'starting' || dshStore.status === 'stopping')
-
-const thinkingLevel = ref(70)      // 思考能力
-const memoryLimit = ref(80)        // 记忆上限
-const speedLevel = ref(90)         // 处理速度
-
-async function handleStart() {
-  if (!isBusy.value && !isRunning.value) {
-    try {
-      await startDsh()
-    } catch (e) {
-      console.error('启动失败', e)
-    }
+async function runDoctor() {
+  checking.value = true
+  try {
+    doc.value = await doctor()
+  } catch (e) {
+    doc.value = { ok: false, checks: [{ name: '服务', ok: false, detail: String(e) }] }
   }
+  checking.value = false
 }
 
-async function handleStop() {
-  if (!isBusy.value && isRunning.value) {
-    try {
-      await stopDsh()
-    } catch (e) {
-      console.error('停止失败', e)
-    }
-  }
+async function switchBrain(target: string) {
+  switching.value = true
+  await dshStore.setTarget(target)
+  switching.value = false
+  await runDoctor()
 }
+
+onMounted(async () => {
+  await dshStore.refresh()
+  runDoctor()
+})
 </script>
 
 <template>
   <div class="view">
     <div class="page-head">
       <h1 class="page-title">运行</h1>
-      <p class="page-sub">控制 AI 运行状态</p>
+      <p class="page-sub">AI 的状态与体检</p>
     </div>
 
-    <!-- 开关区 -->
-    <div class="section run-section">
-      <div class="run-card">
-        <div class="run-status">
-          <span class="run-dot" :class="{ active: isRunning, busy: isBusy }"></span>
-          <div class="run-info">
-            <span class="run-label">{{ isRunning ? '运行中' : isBusy ? '处理中…' : '已停止' }}</span>
-            <span v-if="isRunning" class="run-meta">启动后运行 2 小时 15 分钟</span>
-            <span v-else-if="!isBusy" class="run-meta">当前未运行，点击下方按钮启动</span>
-          </div>
-        </div>
-        <div class="run-actions">
-          <button
-            v-if="!isRunning"
-            class="btn btn-primary"
-            :disabled="isBusy"
-            @click="handleStart"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" class="btn-icon">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            启动
-          </button>
-          <button
-            v-if="isRunning"
-            class="btn btn-secondary"
-            :disabled="isBusy"
-            @click="handleStop"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon">
-              <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-            </svg>
-            停止
-          </button>
+    <section class="card">
+      <div class="card-head"><h2>大脑</h2>
+        <span class="badge" :class="dshStore.status === 'running' ? 'ok' : 'bad'">
+          {{ dshStore.status === 'running' ? '就绪' : '未就绪' }}
+        </span>
+      </div>
+      <div class="brain-info">
+        <div class="row"><span class="k">当前</span><span class="v">{{ dshStore.target.includes('8888') ? '训练工坊模型' : '主力模型' }}</span></div>
+        <div class="row"><span class="k">守卫</span><span class="v">{{ dshStore.status === 'running' ? '在线' : '离线' }}</span></div>
+      </div>
+      <div class="brain-switch">
+        <button class="btn" :class="{ active: !dshStore.target.includes('8888') }" @click="switchBrain('http://localhost:18080/v1')" :disabled="switching">主力模型</button>
+        <button class="btn" :class="{ active: dshStore.target.includes('8888') }" @click="switchBrain('http://localhost:8888/v1')" :disabled="switching">训练工坊模型</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>体检</h2>
+        <button class="btn" @click="runDoctor" :disabled="checking">{{ checking ? '检查中…' : '重新体检' }}</button>
+      </div>
+      <div v-if="doc" class="check-list">
+        <div v-for="c in doc.checks" :key="c.name" class="check" :class="c.ok ? 'pass' : 'fail'">
+          <span class="check-name">{{ c.name }}</span>
+          <span class="check-detail">{{ c.detail }}</span>
         </div>
       </div>
-    </div>
-
-    <!-- 调节区 -->
-    <div class="section">
-      <div class="section-label">调节</div>
-      <div class="sliders">
-        <div class="slider-group">
-          <div class="slider-head">
-            <span class="slider-name">思考能力</span>
-            <span class="slider-value">{{ thinkingLevel }}%</span>
-          </div>
-          <div class="slider-track">
-            <div class="slider-fill" :style="{ width: thinkingLevel + '%' }"></div>
-            <input type="range" min="10" max="100" v-model.number="thinkingLevel" class="slider-input" />
-          </div>
-          <div class="slider-labels">
-            <span>保守</span>
-            <span>深入</span>
-          </div>
-        </div>
-
-        <div class="slider-group">
-          <div class="slider-head">
-            <span class="slider-name">记忆上限</span>
-            <span class="slider-value">{{ memoryLimit }}%</span>
-          </div>
-          <div class="slider-track">
-            <div class="slider-fill" :style="{ width: memoryLimit + '%' }"></div>
-            <input type="range" min="10" max="100" v-model.number="memoryLimit" class="slider-input" />
-          </div>
-          <div class="slider-labels">
-            <span>简短</span>
-            <span>完整</span>
-          </div>
-        </div>
-
-        <div class="slider-group">
-          <div class="slider-head">
-            <span class="slider-name">处理速度</span>
-            <span class="slider-value">{{ speedLevel }}%</span>
-          </div>
-          <div class="slider-track">
-            <div class="slider-fill" :style="{ width: speedLevel + '%' }"></div>
-            <input type="range" min="10" max="100" v-model.number="speedLevel" class="slider-input" />
-          </div>
-          <div class="slider-labels">
-            <span>省电</span>
-            <span>全速</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 统计 -->
-    <div class="section" v-if="isRunning">
-      <div class="section-label">当前状态</div>
-      <div class="stats-grid">
-        <div class="stat-item">
-          <span class="stat-num">~45/秒</span>
-          <span class="stat-name">响应速度</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-num">3.2 GB</span>
-          <span class="stat-name">内存占用</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-num">2</span>
-          <span class="stat-name">已连接工具</span>
-        </div>
-      </div>
-    </div>
+      <p v-else class="hint">未运行</p>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.view {
-  padding: var(--space-8) var(--space-8);
-  max-width: 600px;
-}
+.view { padding: 28px 32px; max-width: 720px; }
+.page-head { margin-bottom: 20px; }
+.page-title { font-size: 20px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+.page-sub { font-size: 13px; color: var(--ink3); margin: 0; }
 
-.page-head {
-  margin-bottom: var(--space-8);
-}
+.card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.card-head h2 { font-size: 14px; font-weight: 600; color: var(--ink2); margin: 0; }
 
-.page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
-}
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+.badge.ok { color: var(--color-success, #50634f); background: rgba(80, 99, 79, 0.1); }
+.badge.bad { color: var(--color-error, #7a5049); background: rgba(122, 80, 73, 0.1); }
 
-.page-sub {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
-}
+.brain-info { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.row { display: flex; font-size: 13px; }
+.k { width: 60px; color: var(--ink4); }
+.v { color: var(--ink2); }
 
-/* 分区 */
-.section {
-  margin-bottom: var(--space-6);
-}
+.brain-switch { display: flex; gap: 8px; }
+.btn { border: 1px solid var(--line); background: var(--raised); color: var(--ink2); border-radius: 8px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.btn:hover { border-color: var(--signal); }
+.btn.active { background: var(--signal-soft, #ece7de); border-color: var(--signal); color: var(--signal); }
 
-.section-label {
-  font-size: var(--font-2xs);
-  font-weight: var(--font-semibold);
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: var(--space-3);
-}
-
-/* 运行卡片 */
-.run-card {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
-  padding: var(--space-5);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.run-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.run-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  flex-shrink: 0;
-  transition: all var(--transition-base);
-}
-
-.run-dot.active {
-  background: var(--color-success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-success) 25%, transparent);
-}
-
-.run-dot.busy {
-  background: var(--color-warning);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
-.run-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.run-label {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text);
-}
-
-.run-meta {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-}
-
-.run-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* 按钮 */
-.btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 32px;
-  padding: 0 var(--space-4);
-  font-size: var(--font-xs);
-  font-weight: var(--font-medium);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  font-family: inherit;
-  border: none;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--color-signal);
-  color: var(--color-bg);
-}
-
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.btn-secondary {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-soft);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  border-color: var(--color-border);
-  background: var(--color-bg-elevated);
-}
-
-.btn-icon {
-  flex-shrink: 0;
-}
-
-/* 滑块 */
-.sliders {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.slider-group {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
-}
-
-.slider-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--space-3);
-}
-
-.slider-name {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-}
-
-.slider-value {
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.slider-track {
-  position: relative;
-  height: 6px;
-  background: var(--color-bg-tertiary);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.slider-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  background: var(--color-signal);
-  border-radius: 3px;
-  pointer-events: none;
-}
-
-.slider-input {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.slider-labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: var(--space-1);
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-}
-
-/* 统计网格 */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-3);
-}
-
-.stat-item {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.stat-num {
-  font-size: var(--font-md);
-  font-weight: var(--font-semibold);
-  color: var(--color-text);
-  font-variant-numeric: tabular-nums;
-}
-
-.stat-name {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-}
+.check-list { display: flex; flex-direction: column; gap: 8px; }
+.check { display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.check.pass { background: rgba(80, 99, 79, 0.08); }
+.check.fail { background: rgba(122, 80, 73, 0.08); }
+.check-name { font-weight: 500; color: var(--ink2); }
+.check-detail { color: var(--ink4); font-size: 12px; }
+.hint { font-size: 12px; color: var(--ink4); margin: 0; }
 </style>

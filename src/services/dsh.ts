@@ -1,89 +1,153 @@
-// DSH 服务封装
-// 封装 Tauri invoke + 事件监听，前端只调用这里的方法
+// Anvil sidecar 客户端 — 所有对话经守卫，不直连推理端点
 
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { useDshStore } from '@/stores/dsh'
+const BASE = 'http://127.0.0.1:18443'
 
-export interface DshState {
-  status: 'idle' | 'starting' | 'running' | 'stopping' | 'error'
-  port: number | null
-  message: string | null
+export interface GuardedMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  reasoning_content?: string
 }
 
-/**
- * 获取 DSH 当前状态
- */
-export async function getDshStatus(): Promise<DshState> {
-  return invoke<DshState>('dsh_status')
+export interface ChatResult {
+  message: GuardedMessage
+  usage: {
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+    cache_hit_rate?: number
+  } | null
+  finish_reason: string | null
+  salvaged: boolean
+  elapsed_s: number
 }
 
-/**
- * 启动 DSH
- */
-export async function startDsh(): Promise<number> {
-  return invoke<number>('dsh_start')
+export interface DoctorCheck {
+  name: string
+  ok: boolean
+  detail: string
 }
 
-/**
- * 停止 DSH
- */
-export async function stopDsh(): Promise<void> {
-  return invoke<void>('dsh_stop')
+export interface DoctorResult {
+  ok: boolean
+  checks: DoctorCheck[]
 }
 
-/**
- * 获取 DSH 端口
- */
-export async function getDshPort(): Promise<number | null> {
-  return invoke<number | null>('dsh_port')
-}
-
-/**
- * 获取 DSH Web UI 的 URL
- */
-export function getDshWebUrl(port: number): string {
-  return `http://127.0.0.1:${port}`
-}
-
-/**
- * 监听 DSH 事件，同步到 store
- * 调用一次即可，返回取消监听函数
- */
-export function setupDshEventListeners(): () => void {
-  const store = useDshStore()
-
-  const unlisteners: Promise<() => void>[] = []
-
-  unlisteners.push(
-    listen<number>('dsh-ready', (event) => {
-      store.setPort(event.payload)
-      store.setStatus('running')
-    }),
-  )
-
-  unlisteners.push(
-    listen<string>('dsh-error', (event) => {
-      store.setError(event.payload)
-    }),
-  )
-
-  return () => {
-    unlisteners.forEach((p) => p.then((fn) => fn()))
+async function post<T>(path: string, body: unknown, timeoutMs = 120000): Promise<T> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`sidecar ${res.status}: ${text}`)
+    }
+    return (await res.json()) as T
+  } finally {
+    clearTimeout(t)
   }
 }
 
-/**
- * 初始化：拉取一次状态 + 注册事件监听
- */
-export async function initDsh(): Promise<void> {
-  const store = useDshStore()
+async function get<T>(path: string, timeoutMs = 30000): Promise<T> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const state = await getDshStatus()
-    store.setStatus(state.status as any)
-    if (state.port) store.setPort(state.port)
-    if (state.message) store.setError(state.message)
-  } catch (e) {
-    console.error('获取 DSH 状态失败', e)
+    const res = await fetch(`${BASE}${path}`, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`sidecar ${res.status}`)
+    return (await res.json()) as T
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+/** 守卫化对话（非流式） */
+export function chat(messages: GuardedMessage[], opts?: { maxTokens?: number; temperature?: number }) {
+  return post<ChatResult>('/chat', {
+    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+    ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+  })
+}
+
+/** 守卫体检 */
+export function doctor() {
+  return get<DoctorResult>('/doctor')
+}
+
+/** 发送前预估 */
+export function estimate(prev: GuardedMessage[], messages: GuardedMessage[]) {
+  return post<{ cache_hit_rate?: number; estimate?: unknown }>('/estimate', {
+    prev: prev.map((m) => ({ role: m.role, content: m.content })),
+    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+  })
+}
+
+/** 流式对话（SSE）。onThinking/onDelta 增量回调 */
+export async function streamChat(
+  messages: GuardedMessage[],
+  handlers: {
+    onThinking?: (text: string) => void
+    onDelta?: (text: string) => void
+    onDone?: () => void
+    onError?: (err: string) => void
+  },
+  opts?: { maxTokens?: number; temperature?: number },
+) {
+  const res = await fetch(`${BASE}/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+      ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    }),
+  })
+  if (!res.ok || !res.body) {
+    handlers.onError?.(`sidecar ${res.status}`)
+    return
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const events = buf.split('\n\n')
+    buf = events.pop() || ''
+    for (const evt of events) {
+      const lines = evt.split('\n')
+      let name = ''
+      let data = ''
+      for (const ln of lines) {
+        if (ln.startsWith('event: ')) name = ln.slice(7).trim()
+        else if (ln.startsWith('data: ')) data = ln.slice(6)
+      }
+      if (!name || !data) continue
+      try {
+        const obj = JSON.parse(data)
+        if (name === 'thinking') handlers.onThinking?.(obj.text || '')
+        else if (name === 'delta') handlers.onDelta?.(obj.text || '')
+        else if (name === 'done') handlers.onDone?.()
+        else if (name === 'error') handlers.onError?.(obj.error || 'unknown')
+      } catch {
+        /* 忽略坏帧 */
+      }
+    }
+  }
+  handlers.onDone?.()
+}
+
+/** 守卫服务是否在线 */
+export async function sidecarAlive(): Promise<boolean> {
+  try {
+    await get('/health', 3000)
+    return true
+  } catch {
+    return false
   }
 }
