@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 
 const AGENTS = [
   { id: 'claude', name: 'Claude Code', desc: 'Anthropic 编码 Agent（需安装）' },
-  { id: 'codex', name: 'Codex', desc: 'OpenAI 编码 Agent（需安装）' },
+  { id: 'codex', name: 'Codex', desc: '智能编码 Agent（需安装）' },
   { id: 'hermes', name: 'Hermes', desc: 'Nous 研究 Agent' },
   { id: 'pi', name: 'PI', desc: '轻量级开源编码 Agent' },
   { id: 'openclaw', name: 'OpenClaw', desc: '开源编码 Agent' },

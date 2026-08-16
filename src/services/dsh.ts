@@ -44,7 +44,7 @@ async function post<T>(path: string, body: unknown, timeoutMs = 120000): Promise
     })
     if (!res.ok) {
       const text = await res.text()
-      throw new Error(`sidecar ${res.status}: ${text}`)
+      throw new Error(`守卫服务响应异常 (${res.status}): ${text}`)
     }
     return (await res.json()) as T
   } finally {
@@ -57,7 +57,7 @@ async function get<T>(path: string, timeoutMs = 30000): Promise<T> {
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     const res = await fetch(`${BASE}${path}`, { signal: ctrl.signal })
-    if (!res.ok) throw new Error(`sidecar ${res.status}`)
+    if (!res.ok) throw new Error(`守卫服务响应异常 (${res.status})`)
     return (await res.json()) as T
   } finally {
     clearTimeout(t)
@@ -107,7 +107,7 @@ export async function streamChat(
     }),
   })
   if (!res.ok || !res.body) {
-    handlers.onError?.(`sidecar ${res.status}`)
+    handlers.onError?.(`守卫服务连接失败 (${res.status})`)
     return
   }
   const reader = res.body.getReader()
