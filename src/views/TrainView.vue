@@ -178,7 +178,7 @@ onUnmounted(() => {
     <!-- 桥梁状态 -->
     <div class="card bridge-card">
       <div class="bridge-row">
-        <span class="label">侧车桥梁</span>
+        <span class="label">守卫服务</span>
         <span v-if="bridging" class="badge badge-pending">检测中</span>
         <span v-else-if="bridgeAlive" class="badge badge-online">在线</span>
         <span v-else class="badge badge-offline">离线</span>
