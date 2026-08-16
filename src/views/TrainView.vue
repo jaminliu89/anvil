@@ -1,12 +1,14 @@
 <script setup lang="ts">
+// 训练工坊页 — Parchment 暖纸设计系统 + 零术语 LoRA 微调
+
 import { ref, onMounted, onUnmounted } from 'vue'
 import {
   startTrain, trainStatus, stopTrain, listCheckpoints,
-  type TrainConfig, type TrainStatus, type Checkpoint
+  type TrainConfig, type TrainStatus, type Checkpoint,
+  sidecarAlive
 } from '../services/dsh'
-import { sidecarAlive } from '../services/dsh'
 
-// 支撑状态
+// 服务状态
 const bridgeAlive = ref(false)
 const bridging = ref(true)
 
@@ -21,13 +23,13 @@ const batchSize = ref(2)
 const maxSeqLen = ref(4096)
 const showAdvanced = ref(false)
 
-// 可用模型列表
+// 可用基座模型列表
 const modelOptions = [
-  { label: 'Ling-3.0-tiny (1.3B MoE)', value: 'inclusionAI/Ling-3.0-tiny' },
-  { label: 'Llama 3.2 1B', value: 'unsloth/Llama-3.2-1B-Instruct' },
-  { label: 'Llama 3.2 3B', value: 'unsloth/Llama-3.2-3B-Instruct' },
-  { label: 'Qwen 2.5 1.5B', value: 'unsloth/Qwen2.5-1.5B-Instruct' },
-  { label: 'Gemma 2 2B', value: 'unsloth/gemma-2b-it' },
+  { label: 'Ling-3.0-tiny (1.3B 轻量核心)', value: 'inclusionAI/Ling-3.0-tiny' },
+  { label: 'Llama 3.2 1B (高速模型)', value: 'unsloth/Llama-3.2-1B-Instruct' },
+  { label: 'Llama 3.2 3B (通用模型)', value: 'unsloth/Llama-3.2-3B-Instruct' },
+  { label: 'Qwen 2.5 1.5B (全能模型)', value: 'unsloth/Qwen2.5-1.5B-Instruct' },
+  { label: 'Gemma 2 2B (精简模型)', value: 'unsloth/gemma-2b-it' },
 ]
 
 const customModel = ref('')
@@ -37,7 +39,6 @@ function activeModel(): string {
 
 // 训练运行状态
 const running = ref(false)
-const training = ref(false)  // 是否正在轮询
 const step = ref(0)
 const loss = ref(0)
 const elapsed = ref(0)
@@ -48,7 +49,6 @@ const statusMsg = ref('')
 const checkpoints = ref<Checkpoint[]>([])
 const cpLoading = ref(false)
 
-// 轮询定时器
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 async function checkBridge() {
@@ -69,16 +69,15 @@ async function doStart() {
   if (dataset.value) cfg.dataset = dataset.value
   if (localDataset.value) cfg.local_dataset = localDataset.value
 
-  statusMsg.value = '启动训练...'
+  statusMsg.value = '准备开启训练...'
   try {
     const res = await startTrain(cfg)
     if (res.ok) {
       running.value = true
-      training.value = true
       startPolling()
     }
   } catch (e: any) {
-    statusMsg.value = `启动失败: ${e.message}`
+    statusMsg.value = `启动训练遇到问题: ${e.message}`
   }
 }
 
@@ -86,8 +85,7 @@ async function doStop() {
   try {
     await stopTrain()
     running.value = false
-    training.value = false
-    statusMsg.value = '训练已停止'
+    statusMsg.value = '训练已主动停止'
     stopPolling()
   } catch (e: any) {
     statusMsg.value = `停止失败: ${e.message}`
@@ -101,7 +99,7 @@ function startPolling() {
       const s: TrainStatus = await trainStatus()
       if (!s.running) {
         running.value = false
-        statusMsg.value = '训练完成'
+        statusMsg.value = '微调训练完成！'
         stopPolling()
         fetchCheckpoints()
         return
@@ -113,7 +111,7 @@ function startPolling() {
         logs.value = [...s.log]
       }
     } catch {
-      // 轮询出错，继续
+      // 忽略轮询间隔波动
     }
   }, 2000)
 }
@@ -137,7 +135,6 @@ async function fetchCheckpoints() {
   }
 }
 
-// 文件选择
 const fileInput = ref<HTMLInputElement | null>(null)
 function pickDataset() {
   fileInput.value?.click()
@@ -146,14 +143,14 @@ function onFileSelected(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files && input.files[0]) {
     localDataset.value = input.files[0].name
-    statusMsg.value = `已选数据集: ${localDataset.value}（需要完整路径）`
+    statusMsg.value = `已选中数据文件: ${localDataset.value}`
   }
 }
 
 function formatTime(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = Math.floor(sec % 60)
-  return `${m}m${s.toString().padStart(2, '0')}s`
+  return `${m}分${s.toString().padStart(2, '0')}秒`
 }
 
 onMounted(async () => {
@@ -171,81 +168,75 @@ onUnmounted(() => {
 <template>
   <div class="view">
     <div class="page-head">
-      <h1 class="page-title">训练</h1>
-      <p class="page-sub">在本地微调模型，无需打开终端</p>
+      <h1 class="page-title">训练工坊</h1>
+      <p class="page-sub">在本地微调 AI 大脑，无需敲一行终端命令</p>
     </div>
 
-    <!-- 桥梁状态 -->
+    <!-- 服务状态 -->
     <div class="card bridge-card">
       <div class="bridge-row">
-        <span class="label">侧车桥梁</span>
-        <span v-if="bridging" class="badge badge-pending">检测中</span>
+        <div>
+          <span class="label">守卫服务状态</span>
+          <div class="sub-text">提供训练与后台管理通道</div>
+        </div>
+        <span v-if="bridging" class="badge badge-pending">检测中…</span>
         <span v-else-if="bridgeAlive" class="badge badge-online">在线</span>
         <span v-else class="badge badge-offline">离线</span>
       </div>
     </div>
 
-    <!-- 配置表单 -->
+    <!-- 配置卡片 -->
     <div class="card config-card" v-if="bridgeAlive">
       <div class="form-group">
         <label class="form-label">基础模型</label>
         <select v-model="model" class="form-select">
           <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          <option value="__custom__">自定义模型...</option>
+          <option value="__custom__">自定义 HuggingFace 模型 ID...</option>
         </select>
-        <input v-if="model === '__custom__'" v-model="customModel" class="form-input" placeholder="HuggingFace 模型 ID" style="margin-top: 6px;" />
+        <input v-if="model === '__custom__'" v-model="customModel" class="form-input" placeholder="输入模型名称（如 unsloth/Llama-3.2-1B）" style="margin-top: 8px;" />
       </div>
 
       <div class="form-group">
         <label class="form-label">数据集</label>
         <div class="dataset-row">
-          <input v-model="dataset" class="form-input" placeholder="HuggingFace 数据集名称" />
+          <input v-model="dataset" class="form-input" placeholder="线上数据集名称" />
           <span class="or-divider">或</span>
-          <button class="btn btn-secondary btn-file" @click="pickDataset">选择本地文件</button>
+          <button class="btn btn-secondary" @click="pickDataset">选择本地数据文件</button>
         </div>
-        <input v-model="localDataset" class="form-input" placeholder="本地数据集路径" style="margin-top: 6px;" />
+        <input v-model="localDataset" class="form-input" placeholder="本地数据集路径 (.jsonl / .csv)" style="margin-top: 8px;" />
         <input ref="fileInput" type="file" accept=".jsonl,.json,.csv,.txt" style="display:none" @change="onFileSelected" />
       </div>
 
-      <!-- 展开高级参数 -->
       <button class="advanced-toggle" @click="showAdvanced = !showAdvanced">
-        <svg :class="{ rotated: showAdvanced }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
-        高级参数
+        <span>{{ showAdvanced ? '收起高级参数' : '展开高级微调参数' }}</span>
       </button>
 
       <div v-if="showAdvanced" class="advanced-section">
         <div class="form-row">
           <div class="form-group half">
-            <label class="form-label">迭代轮数</label>
+            <label class="form-label">训练轮数 (Epochs)</label>
             <input v-model.number="epochs" type="number" min="1" max="100" class="form-input" />
           </div>
           <div class="form-group half">
-            <label class="form-label">学习率</label>
+            <label class="form-label">学习率 (Learning Rate)</label>
             <input v-model="learningRate" class="form-input" placeholder="2e-4" />
           </div>
         </div>
         <div class="form-row">
           <div class="form-group half">
-            <label class="form-label">LoRA rank</label>
+            <label class="form-label">LoRA 秩 (Rank)</label>
             <input v-model.number="loraR" type="number" min="1" max="256" class="form-input" />
           </div>
           <div class="form-group half">
-            <label class="form-label">批大小</label>
+            <label class="form-label">批处理大小 (Batch Size)</label>
             <input v-model.number="batchSize" type="number" min="1" max="64" class="form-input" />
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">最大序列长度</label>
-          <input v-model.number="maxSeqLen" type="number" min="512" max="32768" step="512" class="form-input" />
-        </div>
       </div>
 
-      <!-- 操作按钮 -->
       <div class="action-row">
         <button v-if="!running" class="btn btn-primary btn-start" @click="doStart" :disabled="!activeModel() || (!dataset && !localDataset)">
-          开始训练
+          开启训练
         </button>
         <button v-else class="btn btn-danger btn-stop" @click="doStop">
           停止训练
@@ -254,21 +245,21 @@ onUnmounted(() => {
       <p v-if="statusMsg" class="status-msg">{{ statusMsg }}</p>
     </div>
 
-    <!-- 训练进度 -->
+    <!-- 训练实时进度 -->
     <div v-if="running" class="card progress-card">
-      <h3 class="progress-title">训练进度</h3>
+      <div class="card-title">训练进度监控</div>
       <div class="progress-stats">
         <div class="stat">
           <span class="stat-value">{{ step }}</span>
-          <span class="stat-label">步数</span>
+          <span class="stat-label">已执行步数</span>
         </div>
         <div class="stat">
           <span class="stat-value">{{ loss.toFixed(4) }}</span>
-          <span class="stat-label">损失</span>
+          <span class="stat-label">当前 Loss 损失</span>
         </div>
         <div class="stat">
           <span class="stat-value">{{ formatTime(elapsed) }}</span>
-          <span class="stat-label">耗时</span>
+          <span class="stat-label">累计耗时</span>
         </div>
       </div>
       <div class="log-viewer">
@@ -276,28 +267,27 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 检查点列表 -->
+    <!-- 已保存的检查点 -->
     <div v-if="bridgeAlive" class="section-head">
-      <h2 class="section-title">已训练检查点</h2>
-      <button v-if="!cpLoading" class="btn btn-ghost btn-sm" @click="fetchCheckpoints()">刷新</button>
+      <h2 class="section-title">已产出的训练检查点</h2>
+      <button v-if="!cpLoading" class="btn btn-ghost" @click="fetchCheckpoints()">刷新</button>
     </div>
 
-    <div v-if="cpLoading" class="loading-hint">加载中...</div>
+    <div v-if="cpLoading" class="loading-hint">正在读取检查点…</div>
 
     <div v-if="!cpLoading && checkpoints.length === 0 && bridgeAlive" class="card empty-card">
-      <p class="empty-text">暂无检查点。配置参数后开始训练。</p>
+      <p class="empty-text">暂无微调产物。配置好数据集后点击“开启训练”即可生成。</p>
     </div>
 
     <div v-if="checkpoints.length > 0" class="cp-list">
       <div v-for="(cp, i) in checkpoints" :key="i" class="cp-item">
         <div class="cp-left">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
             <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-            <polyline points="14 2 14 8 20 8"/>
           </svg>
           <div class="cp-info">
             <span class="cp-name">{{ cp.name ?? cp.model ?? 'checkpoint-' + (i + 1) }}</span>
-            <span class="cp-meta">{{ cp.path ?? '' }}</span>
+            <span class="cp-meta">{{ cp.path ?? '存放在本地工坊目录' }}</span>
           </div>
         </div>
       </div>
@@ -307,237 +297,199 @@ onUnmounted(() => {
 
 <style scoped>
 .view {
-  padding: var(--space-8);
-  max-width: 640px;
+  padding: 32px 40px;
+  max-width: 680px;
 }
-.page-head { margin-bottom: var(--space-6); }
-.page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
-}
-.page-sub {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
-}
+.page-head { margin-bottom: 24px; }
+.page-title { font-size: var(--font-xl); font-weight: var(--font-bold); color: var(--ink); margin-bottom: 4px; }
+.page-sub { font-size: var(--font-sm); color: var(--ink3); }
 
-/* 卡片通用 */
 .card {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
+  background: var(--raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
-  margin-bottom: var(--space-4);
+  padding: 20px;
+  margin-bottom: 20px;
 }
 
-/* 桥梁状态 */
 .bridge-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.label { font-size: var(--font-sm); font-weight: var(--font-medium); }
+.label { font-size: var(--font-sm); font-weight: var(--font-semibold); color: var(--ink); }
+.sub-text { font-size: var(--font-xs); color: var(--ink3); margin-top: 2px; }
 
 .badge {
   font-size: var(--font-2xs);
   font-weight: var(--font-medium);
-  padding: 2px var(--space-2);
+  padding: 3px 10px;
   border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
 }
-.badge-online { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
-.badge-offline { background: color-mix(in srgb, var(--color-text-tertiary) 15%, transparent); color: var(--color-text-tertiary); }
-.badge-pending { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
+.badge-online { background: rgba(80, 99, 79, 0.12); color: var(--success); }
+.badge-offline { background: var(--surface); color: var(--ink4); }
+.badge-pending { background: rgba(128, 101, 68, 0.12); color: var(--warning); }
 
-/* 表单 */
-.form-group { margin-bottom: var(--space-4); }
+.form-group { margin-bottom: 16px; }
 .form-group.half { flex: 1; min-width: 0; }
 .form-label {
   display: block;
   font-size: var(--font-xs);
-  font-weight: var(--font-medium);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--space-1);
+  font-weight: var(--font-semibold);
+  color: var(--ink2);
+  margin-bottom: 6px;
 }
 .form-input, .form-select {
   width: 100%;
-  height: 36px;
-  padding: 0 var(--space-3);
+  height: 38px;
+  padding: 0 12px;
   font-size: var(--font-sm);
-  font-family: inherit;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--ink);
   outline: none;
   box-sizing: border-box;
 }
 .form-input:focus, .form-select:focus {
-  border-color: var(--color-signal);
-  box-shadow: 0 0 0 2px var(--color-signal-soft);
+  border-color: var(--signal);
 }
-.form-select { cursor: pointer; }
 
 .dataset-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 10px;
 }
 .dataset-row .form-input { flex: 1; }
-.or-divider {
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-.btn-file { white-space: nowrap; flex-shrink: 0; }
+.or-divider { font-size: var(--font-xs); color: var(--ink4); }
 
 .form-row {
   display: flex;
-  gap: var(--space-3);
+  gap: 12px;
 }
 
-/* 高级参数折叠 */
 .advanced-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
   font-size: var(--font-xs);
-  color: var(--color-signal);
+  color: var(--signal);
+  font-weight: var(--font-medium);
   background: none;
   border: none;
   cursor: pointer;
   padding: 0;
-  margin-bottom: var(--space-3);
-  font-family: inherit;
-}
-.advanced-toggle svg {
-  transition: transform 0.2s;
-}
-.advanced-toggle svg.rotated {
-  transform: rotate(90deg);
+  margin-bottom: 14px;
 }
 .advanced-section {
-  padding: var(--space-3);
-  background: var(--color-bg);
-  border-radius: var(--radius-sm);
-  margin-bottom: var(--space-3);
+  padding: 14px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
 }
 
-/* 按钮 */
 .btn {
-  height: 32px; padding: 0 var(--space-4);
-  font-size: var(--font-xs); font-weight: var(--font-medium);
-  border-radius: var(--radius-sm); cursor: pointer;
-  font-family: inherit;
+  padding: 8px 16px;
+  font-size: var(--font-xs);
+  font-weight: var(--font-semibold);
+  border-radius: var(--radius-md);
+  cursor: pointer;
   transition: all var(--transition-fast);
 }
 .btn-primary {
-  background: var(--color-signal); color: var(--color-bg);
-  border: none;
+  background: var(--signal);
+  color: var(--raised);
+  border: 1px solid var(--signal);
 }
-.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.btn-primary:hover:not(:disabled) { opacity: 0.9; }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-danger {
-  background: var(--color-error); color: white;
+  background: var(--error);
+  color: white;
   border: none;
 }
-.btn-danger:hover { opacity: 0.85; }
 .btn-secondary {
-  background: var(--color-bg-tertiary); color: var(--color-text);
-  border: 1px solid var(--color-border-soft);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  white-space: nowrap;
 }
-.btn-secondary:hover { border-color: var(--color-border); }
 .btn-ghost {
-  background: none; color: var(--color-signal);
-  border: none; padding: 0;
+  background: none;
+  color: var(--signal);
+  border: none;
   font-size: var(--font-xs);
-  cursor: pointer;
 }
-.btn-ghost:hover { text-decoration: underline; }
-.btn-sm { height: 26px; padding: 0 var(--space-2); }
 
-.action-row { margin-top: var(--space-2); }
-.btn-start, .btn-stop { width: 100%; height: 40px; font-size: var(--font-sm); }
+.btn-start, .btn-stop { width: 100%; height: 42px; font-size: var(--font-sm); }
 .status-msg {
   font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-2);
+  color: var(--ink3);
+  margin-top: 10px;
   text-align: center;
 }
 
-/* 训练进度 */
-.progress-card { border-color: var(--color-signal); }
-.progress-title {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  margin-bottom: var(--space-3);
-}
 .progress-stats {
   display: flex;
-  gap: var(--space-4);
-  margin-bottom: var(--space-3);
+  gap: 24px;
+  margin-bottom: 14px;
 }
 .stat {
   display: flex;
   flex-direction: column;
-  align-items: center;
 }
 .stat-value {
   font-size: var(--font-xl);
-  font-weight: var(--font-semibold);
-  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-bold);
+  color: var(--ink);
 }
 .stat-label {
   font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  color: var(--ink3);
 }
+
 .log-viewer {
-  max-height: 200px;
+  max-height: 180px;
   overflow-y: auto;
-  background: var(--color-bg);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: var(--font-2xs);
-  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  font-family: monospace;
+  font-size: 11px;
 }
-.log-line { white-space: pre-wrap; word-break: break-all; color: var(--color-text-secondary); }
+.log-line { color: var(--ink2); }
 
-/* 节头 */
 .section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
-.section-title {
-  font-size: var(--font-sm); font-weight: var(--font-medium);
-}
+.section-title { font-size: var(--font-md); font-weight: var(--font-semibold); color: var(--ink); }
 
-/* 检查点 */
-.loading-hint {
-  font-size: var(--font-xs); color: var(--color-text-tertiary);
-  margin-bottom: var(--space-3);
-}
-.empty-card .empty-text {
-  font-size: var(--font-xs); color: var(--color-text-tertiary);
-  text-align: center; margin: var(--space-2) 0;
+.empty-text {
+  font-size: var(--font-xs);
+  color: var(--ink3);
+  text-align: center;
 }
 
 .cp-list {
-  display: flex; flex-direction: column; gap: 1px;
-  background: var(--color-border-soft);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md); overflow: hidden;
-  margin-bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .cp-item {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-bg-secondary);
+  padding: 12px 16px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
-.cp-left { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-.cp-left svg { color: var(--color-text-tertiary); flex-shrink: 0; }
-.cp-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cp-name { font-size: var(--font-sm); font-weight: var(--font-medium); color: var(--color-text); }
-.cp-meta { font-size: var(--font-2xs); color: var(--color-text-tertiary); }
+.cp-left { display: flex; align-items: center; gap: 12px; }
+.cp-left svg { color: var(--signal); }
+.cp-info { display: flex; flex-direction: column; }
+.cp-name { font-size: var(--font-sm); font-weight: var(--font-semibold); color: var(--ink); }
+.cp-meta { font-size: var(--font-2xs); color: var(--ink3); }
 </style>

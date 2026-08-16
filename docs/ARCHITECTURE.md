@@ -1,234 +1,104 @@
-# Anvil 架构
+# Anvil 架构白皮书 (Architecture Whitepaper)
 
-> 规则引擎为骨架，LLM 为加速器。所有核心功能能用纯规则跑通，LLM 降级后用户不卡壳。
+> **解耦原则**：应用壳层 (Tauri) 与守卫层 (DSH Sidecar) 彻底解耦；规则引擎为骨架，LLM 为可替换加速器。所有核心功能均能靠纯规则跑通，LLM 降级后工作站依然运行正常。
 
-## 总体架构
+---
 
-```
-┌──────────────────────────────────┐
-│  Tauri Desktop App (macOS)       │
-│  ┌────────────┐  ┌────────────┐  │
-│  │ Vue 3 前台  │  │ Rust 后台  │  │
-│  │ 六个页面     │  │ 进程管理   │  │
-│  │ 状态管理     │  │ 托盘/菜单  │  │
-│  │ 守卫/UI     │  │ 生命周期   │  │
-│  └─────┬──────┘  └─────┬──────┘  │
-│        ├────── HTTP ────┤         │
-│        │  :18443        │ spawn   │
-│  ┌─────┴────────────────┴──────┐  │
-│  │  Python Sidecar (bridge.py)  │  │
-│  │  ┌────────────────────────┐  │  │
-│  │  │  DSH Guard（守卫层）    │  │  │
-│  │  │  · reasoning 分离      │  │  │
-│  │  │  · usage 归一化        │  │  │
-│  │  │  · doctor 体检         │  │  │
-│  │  │  · estimate 预估       │  │  │
-│  │  └──────────┬─────────────┘  │  │
-│  │  ┌──────────┴─────────────┐  │  │
-│  │  │  Unsloth 网关          │  │  │
-│  │  │  · /unsloth/status     │  │  │
-│  │  │  · /unsloth/checkpoints│  │  │
-│  │  │  · /unsloth/start/*    │  │  │
-│  │  └────────────────────────┘  │  │
-│  └──────────────────────────────┘  │
-└──────────────────────────────────┘
-         │           │
-  ┌──────┴─┐   ┌─────┴──────┐
-  │:18080  │   │  :8888     │
-  │Ling    │   │ Unsloth    │
-  │llama   │   │ Desktop    │
-  │Server  │   │ (可选)     │
-  └────────┘   └────────────┘
-```
-
-## 三层请求流
-
-一个聊天请求的完整路径：
+## 1. 系统总体架构 (System Architecture)
 
 ```
-[ChatView] → POST /chat → [bridge.py] → DSH Guard
-  ├─ reasoning 分离     ← 把 <think>...</think> 从回复中剥离
-  ├─ usage 归一化       ← 统一 token/tps/耗时 格式
-  ├─ 错误封装           ← 非 200 响应转为友好消息
-  └─ POST → [llama-server:18080]
-                └─ 流式 SSE 返回 → bridge.py SSE → ChatView
-
-[ChatView] → POST /stream → [bridge.py] → SSE 直通
-  ├─ 同上守卫
-  ├─ 流式逐字推送
-  └─ ChatView 解析 SSE + 渲染 reasoning 折叠
+┌──────────────────────────────────────────────────────────────┐
+│  Tauri v2 Desktop App (macOS Native Shell)                   │
+│  ┌─────────────────────────────┐  ┌───────────────────────┐  │
+│  │ Vue 3 + TypeScript 前台     │  │ Rust 后台 (tauri)     │  │
+│  │ · Parchment 设计系统 (暖纸) │  │ · Sidecar 进程管理器  │  │
+│  │ · 6 大工作站视图            │  │ · 托盘与窗口生命周期  │  │
+│  │ · Pinia 状态树              │  │ · 独立信号量管控     │  │
+│  └──────────────┬──────────────┘  └───────────┬───────────┘  │
+│                 │                             │              │
+│                 └─────────── HTTP ────────────┘              │
+│                              :18443                          │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  Python Sidecar (bridge.py / bundled anvil-bridge)     │  │
+│  │  ┌──────────────────────────────────────────────────┐  │  │
+│  │  │  DSH Guard (守卫服务层)                          │  │  │
+│  │  │  · reasoning 思考分离 (DeepSeek & <think>)       │  │  │
+│  │  │  · usage 统计归一化                              │  │  │
+│  │  │  · doctor 环境与引擎体检                          │  │  │
+│  │  │  · estimate 发送前 Token 预估                     │  │  │
+│  │  │  · tool_calls 自动修补 (Salvage Engine)          │  │  │
+│  │  └────────────────────────┬─────────────────────────┘  │  │
+│  │  ┌────────────────────────┴─────────────────────────┐  │  │
+│  │  │  Unsloth 训练与 Agent 桥接网关                    │  │  │
+│  │  │  · /unsloth/status & /unsloth/checkpoints        │  │  │
+│  │  │  · /unsloth/start/<agent> 状态桥接              │  │  │
+│  │  │  · /unsloth/train 异步线程日志收集器             │  │  │
+│  │  └──────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+  ┌──────────────────┐                  ┌──────────────────┐
+  │ 主力推理端点     │                  │ 训练工坊端点     │
+  │ :18080 (llama)   │                  │ :8888 (Unsloth)  │
+  │ Ling-3.0-tiny    │                  │ 训练产物直接载入  │
+  └──────────────────┘                  └──────────────────┘
 ```
 
-## 页面路由
+---
 
-| 路由 | 页面 | 功能 |
+## 2. 三层解耦请求流 (Decoupled Request Pipeline)
+
+```
+[Vue 3 前端] ──(SSE / HTTP POST)──> [DSH Sidecar :18443] ──> [推理端点 :18080 / :8888]
+                                          │
+                                   ┌──────┴──────┐
+                                   │ 守卫拦截管线 │
+                                   │ 1. 思考分离 │
+                                   │ 2. 格式修补 │
+                                   │ 3. 错误降级 │
+                                   └─────────────┘
+```
+
+1. **思考过程分离 (`reasoning_content`)**：
+   从 DeepSeek 原生响应或标准回复中智能剥离 `<think>...</think>` 标签，供前端实现可折叠推演面板。
+2. **工具调用自动抢救 (Salvage Engine)**：
+   若 LLM 输出非法 JSON 工具调用，守卫引擎自动进行正则匹配与修补，确保 Agent 响应不中断。
+3. **错误归一化**：
+   后端任何 HTTP 500 / 404 错误被转化为符合“零术语铁律”的友好中文字符串。
+
+---
+
+## 3. 前端 UI 与视觉架构 (Parchment Design System)
+
+采用了全新的 **Parchment (暖纸/暖石) 设计系统**：
+- **Canvas (画布)**: `#F4F1EA` (暖纸底色)
+- **Surface (表面)**: `#FAF8F3` (纸张卡片)
+- **Raised (抬升层)**: `#FFFDF8` (对话气泡与高亮块)
+- **Ink (墨水文字)**: `#181816` (深碳墨水)
+- **Signal (强调)**: `#655D52` (锻造棕/暖褐)
+
+---
+
+## 4. 页面路由与职责划定 (Modular Views)
+
+| 路由 | 视图 | 核心职责 |
 |---|---|---|
-| `/` | ChatView | 默认页，聊天对话 + 推理折叠 + 守卫角标 |
-| `/runtime` | RuntimeView | 大脑切换（:18080/:8888）+ 体检三项 |
-| `/guard` | GuardView | 守卫日志、doctor 清单、抢救记录 |
-| `/train` | TrainView | Unsloth 模型/训练状态 + 启动训练 |
-| `/connect` | ConnectView | Agent 桥接卡片（claude/codex/pi/hermes） |
-| `/settings` | SettingsView | 模式切换（普通/高级）+ 配置 |
+| `/` | `ChatView.vue` | 默认首页，沉浸式对话、思考推演折叠、预估提示、抢救角标 |
+| `/runtime` | `RuntimeView.vue` | AI 引擎调节、主力/训练工坊大脑热切换、智能调节滑块、环境体检 |
+| `/train` | `TrainView.vue` | 训练工坊，基座模型选择、本地/线上数据集导入、LoRA 参数调节、Loss 曲线 |
+| `/connect` | `ConnectView.vue` | Agent 连接中心，Claude Code / Codex / Hermes 等一键状态桥接 |
+| `/guard` | `GuardView.vue` | 守卫面板，协议加固诊断、接口试调耗时、抢救日志历史 |
+| `/settings` | `SettingsView.vue` | 系统偏好、Parchment 亮暗色调切换、开机自启、模式选定 |
 
-## 守卫层（DSH Guard）
+---
 
-bridge.py 的核心，不是装饰品。
+## 5. 零术语设计宪法 (Zero-Terminology Constitution)
 
-### 响应处理管线
-
-```
-原始响应 (JSON) → [guard.hydrate]
-  ├─ 提取 reasoning_content（DeepSeek 原生字段）
-  ├─ 若没有 → 从 content 中正则提取 <think>...</think>
-  ├─ 剥离 reasoning 后纯内容 → response.content
-  └─ 返回 {content, reasoning, usage, guard}
-
-usage 归一化 → [guard.hydrate_usage]
-  ├─ 统一 token_count/tps/duration_ms
-  ├─ 兼容不同后端的不同字段名
-  └─ 缺失字段自动补 0
-
-错误封装 → [guard.safe]
-  ├─ 非 200 → 提取后端错误消息
-  ├─ 超时 → 友好提示
-  └─ 保持流式输出兼容
-```
-
-### 健康检查
-
-```
-GET /doctor → [guard.status]
-  ├─ model: 模型名称 / 未加载
-  ├─ alive: true/false
-  ├─ total_tokens, tps, uptime
-  └─ config: 当前配置（model/temperature/max_tokens）
-
-GET /health → [快速存活检查]
-  └─ {ok: true, dsh: "0.2.0", ts: timestamp}
-```
-
-## 进程生命周期（Rust 管理器）
-
-manager.rs 管理 bridge.py 和关联进程：
-
-```
-Tauri 启动
-  └─ manager::init()
-        ├─ 从 app 资源目录定位 bridge.py
-        ├─ 或从 sidecar 目录定位（开发模式）
-        ├─ spawn("python3", ["bridge.py", "--port", "18443"])
-        ├─ 轮询 /health 直到 200（最多 10 秒）
-        └─ 注册 on_exit 回调（自动重启）
-
-Rust 对外暴露命令：
-  ├─ get_sidecar_status()  → {pid, alive, uptime}
-  ├─ restart_sidecar()     → kill + respawn
-  └─ stop_sidecar()        → kill + 从托盘隐藏
-```
-
-## 大脑切换
-
-RuntimeView 实现端点热切换：
-
-```
-[切换按钮 :18080 ↔ :8888]
-  ├─ 更新 store.settings.inferenceEndpoint
-  ├─ ChatView watch → 自动重连新端点
-  ├─ 原端点不做健康检查（无阻塞切换）
-  └─ guard 自动适应新端点的响应格式
-```
-
-Unsloth Desktop 切换的特殊性：
-- Unsloth :8888 需要 API 认证（Bearer token）
-- 当前：切换显示「Unsloth 已连接」但未通过认证
-- 待完善：通过 Unsloth CLI 获取 API key 后自动注入
-
-## 训练页（TrainView）
-
-通过 bridge.py 的 Unsloth 网关与 Unsloth Desktop 交互：
-
-```
-[TrainView] → GET /unsloth/status → [bridge.py]
-  └─ 转发到 :8888 → 返回 Unsloth 状态/版本
-
-[TrainView] → GET /unsloth/checkpoints → [bridge.py]
-  └─ 转发到 :8888 → 返回检查点列表
-
-[TrainView] → "打开 Unsloth Desktop"
-  └─ window.open('unsloth://') → macOS URL scheme
-```
-
-## 连接页（ConnectView）
-
-检测本地可用的编码 Agent：
-
-```
-[ConnectView] 挂载 → 检测各 Agent CLI 是否存在
-  └─ which claude/codex/pi/hermes/opencode → 状态
-  └─ 显示已检测到的 Agent + 启动按钮
-
-启动按钮 → POST /unsloth/start/{agent_id}
-  └─ 调用 unsloth run --agent {agent_id}
-  └─ 输出 API key 传给 Agent
-```
-
-## 设计约束
-
-### 前端
-- 语言：Vue 3 + TypeScript + Vite
-- 状态管理：Pinia stores（dsh.ts / settings.ts）
-- 样式：Parchment 设计系统（暖石色系）
-- 路由：vue-router，懒加载
-- 部署：Tauri 内嵌 webview
-
-### 后端（Rust）
-- 语言：Rust（tauri 2.x）
-- 进程管理：std::process::Command + 回调
-- 暴露 Tauri 命令：get_sidecar_status / restart_sidecar / stop_sidecar
-- 托盘：系统托盘 + 菜单
-
-### 后端（Python sidecar）
-- 语言：Python 3.12
-- HTTP：http.server（stdlib，无额外依赖）
-- LLM：DeepSeekHarness 库
-- 网关：requests 转发到 Unsloth Desktop API
-
-## 目录结构
-
-```
-dsh-gui/
-├── src/                     # Vue 3 前端
-│   ├── App.vue
-│   ├── main.ts
-│   ├── views/               # 6 个页面
-│   │   ├── ChatView.vue
-│   │   ├── RuntimeView.vue
-│   │   ├── GuardView.vue
-│   │   ├── TrainView.vue
-│   │   ├── ConnectView.vue
-│   │   └── SettingsView.vue
-│   ├── services/            # API 层
-│   │   └── dsh.ts           # DSH bridge client
-│   ├── stores/              # 状态
-│   │   ├── dsh.ts
-│   │   └── settings.ts
-│   ├── styles/              # Parchment 设计系统
-│   │   └── main.css
-│   └── router/
-│       └── index.ts
-├── src-tauri/               # Tauri 后端
-│   ├── src/
-│   │   ├── lib.rs
-│   │   └── dsh/
-│   │       └── manager.rs   # 进程管理器
-│   ├── sidecar/
-│   │   └── bridge.py        # DSH 守卫 HTTP 服务
-│   ├── icons/
-│   └── tauri.conf.json
-├── docs/
-│   ├── PRD.md               # 产品需求文档
-│   ├── TASKS.md              # 执行清单
-│   ├── ARCHITECTURE.md      # 本文
-│   └── PITCH.md             # 宣传文档
-└── README.md
-```
+UI 视图坚决摒弃任何底层的技术硬词，替换方案如下：
+- `Endpoint` / `llama-server` → **AI 大脑 / 引擎**
+- `Temperature` → **发散度 / 思考能力**
+- `Context Length` / `ctx_size` → **记忆长度**
+- `Sidecar` / `Bridge` → **守卫服务**
+- `LoRA Fine-tuning` → **训练工坊**

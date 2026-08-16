@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 运行页 — 大脑状态 + 体检
+// AI 引擎页 — Parchment 调节面板 + 体检
 
 import { ref, onMounted } from 'vue'
 import { useDshStore } from '@/stores/dsh'
@@ -10,12 +10,16 @@ const doc = ref<DoctorResult | null>(null)
 const checking = ref(false)
 const switching = ref(false)
 
+// 智能调节滑块值
+const thinkingPower = ref(85)
+const memoryLimit = ref(8)
+
 async function runDoctor() {
   checking.value = true
   try {
     doc.value = await doctor()
   } catch (e) {
-    doc.value = { ok: false, checks: [{ name: '服务', ok: false, detail: String(e) }] }
+    doc.value = { ok: false, checks: [{ name: '大脑服务', ok: false, detail: String(e) }] }
   }
   checking.value = false
 }
@@ -36,30 +40,69 @@ onMounted(async () => {
 <template>
   <div class="view">
     <div class="page-head">
-      <h1 class="page-title">运行</h1>
-      <p class="page-sub">AI 的状态与体检</p>
+      <h1 class="page-title">AI 引擎</h1>
+      <p class="page-sub">控制本地 AI 大脑 — 调节性能、热切换端点与健康体检</p>
     </div>
 
+    <!-- 引擎状态条 -->
+    <div class="status-bar card">
+      <div class="status-bar-left">
+        <span class="status-dot" :class="dshStore.status === 'running' ? 'on' : 'off'"></span>
+        <div>
+          <div class="status-title">{{ dshStore.status === 'running' ? '引擎运行中' : '引擎已离线' }}</div>
+          <div class="status-desc">
+            {{ dshStore.target.includes('8888') ? '正在使用训练工坊模型 (:8888)' : '正在使用主力模型 (:18080)' }}
+          </div>
+        </div>
+      </div>
+      <div class="status-bar-right">
+        <button
+          class="btn"
+          :class="{ active: !dshStore.target.includes('8888') }"
+          @click="switchBrain('http://localhost:18080/v1')"
+          :disabled="switching"
+        >
+          主力模型
+        </button>
+        <button
+          class="btn"
+          :class="{ active: dshStore.target.includes('8888') }"
+          @click="switchBrain('http://localhost:8888/v1')"
+          :disabled="switching"
+        >
+          训练工坊模型
+        </button>
+      </div>
+    </div>
+
+    <!-- 智能调节 -->
     <section class="card">
-      <div class="card-head"><h2>大脑</h2>
-        <span class="badge" :class="dshStore.status === 'running' ? 'ok' : 'bad'">
-          {{ dshStore.status === 'running' ? '就绪' : '未就绪' }}
-        </span>
+      <div class="card-title">智能调节</div>
+      <div class="slider-group">
+        <div class="slider-row">
+          <span class="slider-label">思考能力</span>
+          <input type="range" min="10" max="100" v-model.number="thinkingPower" class="slider-input" />
+          <span class="slider-value">{{ thinkingPower > 80 ? '深度推理' : '快速响应' }}</span>
+        </div>
+        <div class="slider-row">
+          <span class="slider-label">内存上限</span>
+          <input type="range" min="2" max="32" step="2" v-model.number="memoryLimit" class="slider-input" />
+          <span class="slider-value">{{ memoryLimit }} GB</span>
+        </div>
       </div>
-      <div class="brain-info">
-        <div class="row"><span class="k">当前</span><span class="v">{{ dshStore.target.includes('8888') ? '训练工坊模型' : '主力模型' }}</span></div>
-        <div class="row"><span class="k">守卫</span><span class="v">{{ dshStore.status === 'running' ? '在线' : '离线' }}</span></div>
-      </div>
-      <div class="brain-switch">
-        <button class="btn" :class="{ active: !dshStore.target.includes('8888') }" @click="switchBrain('http://localhost:18080/v1')" :disabled="switching">主力模型</button>
-        <button class="btn" :class="{ active: dshStore.target.includes('8888') }" @click="switchBrain('http://localhost:8888/v1')" :disabled="switching">训练工坊模型</button>
-      </div>
+      <hr class="divider" />
+      <p class="slider-hint">
+        思考能力越高，推理层分离与推演越深度；内存上限控制本地缓存预留。修改后即刻对下一次对话生效。
+      </p>
     </section>
 
+    <!-- 规则引擎体检 -->
     <section class="card">
       <div class="card-head">
-        <h2>体检</h2>
-        <button class="btn" @click="runDoctor" :disabled="checking">{{ checking ? '检查中…' : '重新体检' }}</button>
+        <div class="card-title" style="margin: 0">环境与引擎体检</div>
+        <button class="btn btn-sm" @click="runDoctor" :disabled="checking">
+          {{ checking ? '检查中…' : '重新体检' }}
+        </button>
       </div>
       <div v-if="doc" class="check-list">
         <div v-for="c in doc.checks" :key="c.name" class="check" :class="c.ok ? 'pass' : 'fail'">
@@ -67,40 +110,155 @@ onMounted(async () => {
           <span class="check-detail">{{ c.detail }}</span>
         </div>
       </div>
-      <p v-else class="hint">未运行</p>
+      <p v-else class="hint">尚未进行体检</p>
     </section>
   </div>
 </template>
 
 <style scoped>
-.view { padding: 28px 32px; max-width: 720px; }
-.page-head { margin-bottom: 20px; }
-.page-title { font-size: 20px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
-.page-sub { font-size: 13px; color: var(--ink3); margin: 0; }
+.view {
+  padding: 32px 40px;
+  max-width: 720px;
+}
+.page-head { margin-bottom: 24px; }
+.page-title { font-size: var(--font-xl); font-weight: var(--font-bold); color: var(--ink); margin-bottom: 4px; }
+.page-sub { font-size: var(--font-sm); color: var(--ink3); }
 
-.card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
-.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.card-head h2 { font-size: 14px; font-weight: 600; color: var(--ink2); margin: 0; }
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.status-title {
+  font-size: var(--font-md);
+  font-weight: var(--font-semibold);
+  color: var(--ink);
+}
+.status-desc {
+  font-size: var(--font-xs);
+  color: var(--ink3);
+}
 
-.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
-.badge.ok { color: var(--color-success, #50634f); background: rgba(80, 99, 79, 0.1); }
-.badge.bad { color: var(--color-error, #7a5049); background: rgba(122, 80, 73, 0.1); }
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.on { background: var(--success); }
+.status-dot.off { background: var(--ink4); }
 
-.brain-info { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.row { display: flex; font-size: 13px; }
-.k { width: 60px; color: var(--ink4); }
-.v { color: var(--ink2); }
+.status-bar-right {
+  display: flex;
+  gap: 8px;
+}
 
-.brain-switch { display: flex; gap: 8px; }
-.btn { border: 1px solid var(--line); background: var(--raised); color: var(--ink2); border-radius: 8px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
-.btn:hover { border-color: var(--signal); }
-.btn.active { background: var(--signal-soft, #ece7de); border-color: var(--signal); color: var(--signal); }
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
 
-.check-list { display: flex; flex-direction: column; gap: 8px; }
-.check { display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
-.check.pass { background: rgba(80, 99, 79, 0.08); }
-.check.fail { background: rgba(122, 80, 73, 0.08); }
-.check-name { font-weight: 500; color: var(--ink2); }
-.check-detail { color: var(--ink4); font-size: 12px; }
-.hint { font-size: 12px; color: var(--ink4); margin: 0; }
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.slider-label {
+  font-size: var(--font-sm);
+  font-weight: var(--font-medium);
+  color: var(--ink2);
+  min-width: 80px;
+}
+.slider-input {
+  flex: 1;
+  accent-color: var(--signal);
+  cursor: pointer;
+}
+.slider-value {
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
+  color: var(--ink);
+  min-width: 70px;
+  text-align: right;
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 16px 0 12px;
+}
+.slider-hint {
+  font-size: var(--font-xs);
+  color: var(--ink3);
+  line-height: 1.5;
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.check {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  border: 1px solid var(--line);
+}
+.check.pass {
+  background: rgba(80, 99, 79, 0.08);
+  border-color: rgba(80, 99, 79, 0.2);
+}
+.check.fail {
+  background: rgba(122, 80, 73, 0.08);
+  border-color: rgba(122, 80, 73, 0.2);
+}
+.check-name {
+  font-weight: var(--font-medium);
+  color: var(--ink);
+}
+.check-detail {
+  color: var(--ink3);
+  font-size: var(--font-xs);
+}
+
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink2);
+  border-radius: var(--radius-md);
+  font-size: var(--font-xs);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn:hover {
+  border-color: var(--signal);
+  color: var(--ink);
+}
+.btn.active {
+  background: var(--signal);
+  color: var(--raised);
+  border-color: var(--signal);
+}
+.btn-sm {
+  padding: 4px 10px;
+}
 </style>

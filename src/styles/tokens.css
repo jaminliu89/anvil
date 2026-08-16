@@ -1,46 +1,58 @@
 /* ============================================
-   Design Tokens · 鲸团 (Parchment v3.2)
+   Design Tokens · Anvil (Parchment Design System)
    ============================================
-   Quiet Technology · 暖石深色系
-   禁用：蓝/紫/发光/玻璃拟态/emoji
+   Warm Paper / Parchment Tone · Quiet Technology
    ============================================ */
 
 :root {
-  /* ---- 颜色 ---- */
-  /* 背景 · 暖石系 */
-  --color-bg: #1a1815;
-  --color-bg-secondary: #211f1b;
-  --color-bg-tertiary: #2a2722;
-  --color-bg-elevated: #322e28;
-  --color-bg-inset: #141210;
+  /* ---- Canvas & Surfaces ---- */
+  --canvas: #F4F1EA;
+  --surface: #FAF8F3;
+  --raised: #FFFDF8;
+  --line: #D9D4CA;
 
-  /* 文字 · 四级灰度 */
-  --color-text: #e8e4de;
-  --color-text-secondary: #a8a29a;
-  --color-text-tertiary: #787268;
-  --color-text-muted: #555048;
+  /* ---- Ink (Typography) ---- */
+  --ink: #181816;
+  --ink2: #3C3B37;
+  --ink3: #706D65;
+  --ink4: #9A968C;
 
-  /* 边框 · 极细几乎看不见 */
-  --color-border: rgba(255, 255, 255, 0.09);
-  --color-border-soft: rgba(255, 255, 255, 0.05);
-  --color-border-strong: rgba(255, 255, 255, 0.14);
+  /* ---- Signal & Accents ---- */
+  --signal: #655D52;
+  --signal-soft: #ECE7DE;
+  --success: #50634F;
+  --warning: #806544;
+  --error: #7A5049;
 
-  /* 主操作 · 近黑 */
-  --color-accent: #e8e4de;
-  --color-accent-hover: #ffffff;
-  --color-accent-soft: rgba(232, 228, 222, 0.08);
+  /* ---- Mapping to Standard Color Tokens ---- */
+  --color-bg: var(--canvas);
+  --color-bg-secondary: var(--surface);
+  --color-bg-tertiary: var(--signal-soft);
+  --color-bg-elevated: var(--raised);
+  --color-bg-inset: #EAE6DC;
 
-  /* 强调色 · 暖石棕 */
-  --color-signal: #b8a990;
-  --color-signal-hover: #c9bba4;
-  --color-signal-soft: rgba(184, 169, 144, 0.12);
+  --color-text: var(--ink);
+  --color-text-secondary: var(--ink2);
+  --color-text-tertiary: var(--ink3);
+  --color-text-muted: var(--ink4);
 
-  /* 功能色 */
-  --color-success: #8b9e7a;
-  --color-warning: #c4a25a;
-  --color-error: #c06c6c;
+  --color-border: var(--line);
+  --color-border-soft: rgba(217, 212, 202, 0.6);
+  --color-border-strong: #C8C2B7;
 
-  /* ---- 间距 · 4px 基准 ---- */
+  --color-accent: var(--ink);
+  --color-accent-hover: #000000;
+  --color-accent-soft: rgba(24, 24, 22, 0.06);
+
+  --color-signal: var(--signal);
+  --color-signal-hover: #524B42;
+  --color-signal-soft: var(--signal-soft);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+
+  /* ---- Spacing ---- */
   --space-05: 2px;
   --space-1: 4px;
   --space-2: 8px;
@@ -51,47 +63,63 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
-  --space-16: 64px;
 
-  /* ---- 圆角 · 克制 ---- */
+  /* ---- Border Radius ---- */
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* ---- 字号 ---- */
-  --font-2xs: 10px;
-  --font-xs: 11px;
-  --font-sm: 12px;
-  --font-base: 13px;
-  --font-md: 14px;
-  --font-lg: 15px;
-  --font-xl: 17px;
-  --font-2xl: 20px;
-  --font-3xl: 24px;
+  /* ---- Typography Sizes ---- */
+  --font-2xs: 11px;
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-base: 14px;
+  --font-md: 15px;
+  --font-lg: 18px;
+  --font-xl: 22px;
+  --font-2xl: 28px;
 
-  /* ---- 字重 ---- */
+  /* ---- Font Weights ---- */
   --font-regular: 400;
   --font-medium: 500;
   --font-semibold: 600;
+  --font-bold: 700;
 
-  /* ---- 动效 ---- */
-  --transition-fast: 120ms ease;
-  --transition-base: 200ms ease;
-  --transition-slow: 300ms ease;
-  --transition-ios: 400ms cubic-bezier(0.32, 0.72, 0, 1);
+  /* ---- Animations & Transitions ---- */
+  --transition-fast: 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-slow: 300ms cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* ---- 组件 ---- */
-  --header-height: 44px;
+  /* ---- Layout Sizes ---- */
   --titlebar-height: 38px;
-  --sidebar-width: 240px;
-  --control-height: 28px;
-  --control-height-lg: 32px;
+  --sidebar-width: 210px;
 
-  /* ---- 阴影 ---- */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.15);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.3);
-  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
+  /* ---- Shadows ---- */
+  --shadow-sm: 0 1px 3px rgba(24, 24, 22, 0.05);
+  --shadow-md: 0 4px 12px rgba(24, 24, 22, 0.08);
+  --shadow-lg: 0 12px 32px rgba(24, 24, 22, 0.12);
+}
+
+/* Dark Mode Overrides when html.dark is set */
+html.dark {
+  --canvas: #1A1815;
+  --surface: #211F1B;
+  --raised: #2A2722;
+  --line: rgba(255, 255, 255, 0.09);
+
+  --ink: #E8E4DE;
+  --ink2: #A8A29A;
+  --ink3: #787268;
+  --ink4: #555048;
+
+  --signal: #B8A990;
+  --signal-soft: rgba(184, 169, 144, 0.12);
+  --success: #8B9E7A;
+  --warning: #C4A25A;
+  --error: #C06C6C;
+
+  --color-border-soft: rgba(255, 255, 255, 0.05);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
 }

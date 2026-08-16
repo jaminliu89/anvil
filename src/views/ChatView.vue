@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 对话页 — 所有消息经守卫，思考过程折叠展示
+// 对话页 — Parchment 暖纸设计系统 + 思考折叠 + 守卫状态
 
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useDshStore } from '@/stores/dsh'
@@ -41,7 +41,7 @@ async function updateEstimate() {
     const prev = messages.value.map((m) => ({ role: m.role, content: m.content }))
     const est = await estimate(prev, [{ role: 'user', content: text }])
     const rate = (est as { cache_hit_rate?: number }).cache_hit_rate
-    if (rate !== undefined) estimateHint.value = `预计命中缓存 ${(rate * 100).toFixed(0)}%`
+    if (rate !== undefined) estimateHint.value = `预计缓存命中率 ${(rate * 100).toFixed(0)}%`
   } catch {
     estimateHint.value = ''
   }
@@ -76,7 +76,7 @@ async function send() {
           scrollBottom()
         },
         onError: (err) => {
-          assistant.content += `\n\n[出错] ${err}`
+          assistant.content += `\n\n[回答异常] ${err}`
         },
       },
       { maxTokens: 2048 },
@@ -90,7 +90,7 @@ async function send() {
       assistant.cacheRate = r.usage?.cache_hit_rate
       assistant.salvaged = r.salvaged
     } catch (e2) {
-      assistant.content = `[出错] ${e2}`
+      assistant.content = `[对话遇到问题] ${e2}`
     }
   }
   assistant.elapsed = Number(((performance.now() - t0) / 1000).toFixed(1))
@@ -113,25 +113,30 @@ onMounted(() => {
   <div class="view chat-view">
     <div class="msg-list" ref="listEl">
       <div v-if="messages.length === 0" class="empty">
-        <div class="empty-title">和你的本地 AI 说话</div>
-        <div class="empty-sub">全部本地运行 · 不联网 · 不留痕</div>
+        <div class="empty-badge">Parchment AI Workstation</div>
+        <div class="empty-title">与你的本地 AI 对话</div>
+        <div class="empty-sub">全过程本地运行 · 数据绝不出本机 · 零 API 费用</div>
       </div>
 
       <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-        <!-- 思考折叠条 -->
+        <!-- 思考过程折叠条 -->
         <div v-if="m.reasoning" class="think" @click="thinkOpen[i] = !thinkOpen[i]">
-          <span class="think-label">{{ thinkOpen[i] ? '收起思考' : '展开思考' }}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 16v-4M12 8h.01"></path>
+          </svg>
+          <span class="think-label">{{ thinkOpen[i] ? '收起思考推演过程' : '展开思考推演过程' }}</span>
         </div>
         <pre v-if="m.reasoning && thinkOpen[i]" class="think-body">{{ m.reasoning }}</pre>
 
         <div class="bubble">
-          <pre class="content">{{ m.content || (busy && i === messages.length - 1 ? '…' : '') }}</pre>
+          <pre class="content">{{ m.content || (busy && i === messages.length - 1 ? '思考中…' : '') }}</pre>
         </div>
 
         <div v-if="m.role === 'assistant' && m.elapsed" class="meta">
-          <span v-if="m.elapsed">{{ m.elapsed }}s</span>
-          <span v-if="m.cacheRate !== undefined">缓存 {{ (m.cacheRate * 100).toFixed(0) }}%</span>
-          <span v-if="m.salvaged">已修复</span>
+          <span v-if="m.elapsed">耗时 {{ m.elapsed }}s</span>
+          <span v-if="m.cacheRate !== undefined">缓存命中 {{ (m.cacheRate * 100).toFixed(0) }}%</span>
+          <span v-if="m.salvaged" class="salvage-tag">守卫已自动修补</span>
         </div>
       </div>
     </div>
@@ -143,10 +148,12 @@ onMounted(() => {
           v-model="input"
           @keydown="onKeydown"
           @input="updateEstimate"
-          placeholder="输入消息，Enter 发送"
+          placeholder="输入消息，Enter 发送，Shift + Enter 换行"
           rows="2"
         ></textarea>
-        <button class="send" @click="send" :disabled="busy || !input.trim()">{{ busy ? '…' : '发送' }}</button>
+        <button class="send" @click="send" :disabled="busy || !input.trim()">
+          {{ busy ? '处理中...' : '发送' }}
+        </button>
       </div>
     </div>
   </div>
@@ -157,12 +164,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--canvas);
 }
 
 .msg-list {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 24px 32px;
 }
 
 .empty {
@@ -171,47 +179,89 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
+  text-align: center;
 }
-.empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
-.empty-sub { font-size: 13px; color: var(--ink3); }
+.empty-badge {
+  font-size: 11px;
+  font-weight: var(--font-medium);
+  color: var(--signal);
+  background: var(--signal-soft);
+  padding: 3px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+}
+.empty-title {
+  font-size: var(--font-xl);
+  font-weight: var(--font-bold);
+  color: var(--ink);
+}
+.empty-sub {
+  font-size: var(--font-sm);
+  color: var(--ink3);
+}
 
-.msg { margin-bottom: 16px; max-width: 78%; }
-.msg.user { margin-left: auto; }
+.msg {
+  margin-bottom: 20px;
+  max-width: 82%;
+}
+.msg.user {
+  margin-left: auto;
+}
 
 .think {
   font-size: 12px;
-  color: var(--ink4);
+  color: var(--ink3);
   cursor: pointer;
   user-select: none;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  background: var(--surface);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--line);
 }
-.think-label { border-bottom: 1px dashed var(--ink4); padding-bottom: 1px; }
+.think:hover {
+  color: var(--ink);
+  border-color: var(--signal);
+}
+.think-label {
+  font-size: 11px;
+}
 
 .think-body {
   font-size: 12px;
-  color: var(--ink3);
-  background: var(--signal-soft);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 0 0 6px 0;
+  color: var(--ink2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin: 0 0 8px 0;
   white-space: pre-wrap;
-  font-family: var(--font-ui);
-  max-height: 220px;
+  font-family: inherit;
+  max-height: 240px;
   overflow-y: auto;
+  line-height: 1.6;
 }
 
 .bubble {
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 14px;
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  font-size: var(--font-md);
   line-height: 1.65;
+  box-shadow: var(--shadow-sm);
 }
-.msg.user .bubble { background: var(--signal); color: var(--paper); }
-.msg.assistant .bubble { background: var(--raised); border: 1px solid var(--line); color: var(--ink2); }
+.msg.user .bubble {
+  background: var(--signal);
+  color: var(--raised);
+}
+.msg.assistant .bubble {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
 
 .content {
   margin: 0;
@@ -222,39 +272,68 @@ onMounted(() => {
 
 .meta {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   font-size: 11px;
   color: var(--ink4);
-  margin-top: 4px;
+  margin-top: 6px;
+}
+.salvage-tag {
+  color: var(--success);
+  font-weight: var(--font-medium);
 }
 
-.composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); }
-.est { font-size: 11px; color: var(--ink4); margin-bottom: 6px; }
-.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer {
+  padding: 16px 28px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.est {
+  font-size: 11px;
+  color: var(--signal);
+  margin-bottom: 8px;
+  font-weight: var(--font-medium);
+}
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
 
 textarea {
   flex: 1;
   resize: none;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: var(--font-base);
   font-family: inherit;
   background: var(--raised);
   color: var(--ink);
   outline: none;
+  box-sizing: border-box;
+  transition: border-color var(--transition-fast);
 }
-textarea:focus { border-color: var(--signal); }
+textarea:focus {
+  border-color: var(--signal);
+}
 
 .send {
-  border: none;
+  border: 1px solid var(--signal);
   background: var(--signal);
-  color: var(--paper);
-  border-radius: 10px;
-  padding: 10px 18px;
-  font-size: 14px;
-  font-weight: 500;
+  color: var(--raised);
+  border-radius: var(--radius-md);
+  padding: 10px 20px;
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
   cursor: pointer;
+  height: 42px;
+  transition: opacity var(--transition-fast);
 }
-.send:disabled { opacity: 0.4; cursor: default; }
+.send:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 </style>

@@ -1,4 +1,4 @@
-/* ========== Global Styles · 鲸团 ========== */
+/* ========== Global Styles · Anvil (Parchment System) ========== */
 
 *,
 *::before,
@@ -14,16 +14,15 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: var(--color-bg);
+  background: var(--canvas);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter",
-    "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
   font-size: var(--font-base);
   font-weight: var(--font-regular);
-  color: var(--color-text);
-  background: var(--color-bg);
+  color: var(--ink);
+  background: var(--canvas);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -52,7 +51,7 @@ button {
 }
 
 a {
-  color: var(--color-accent);
+  color: var(--signal);
   text-decoration: none;
 }
 
@@ -61,7 +60,7 @@ a:hover {
   text-underline-offset: 2px;
 }
 
-/* 滚动条 — 极细 */
+/* Custom Scrollbar - Parchment subtle style */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -72,27 +71,44 @@ a:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--line);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-strong);
+  background: var(--ink4);
 }
 
-/* 选中文本 */
+/* Selection */
 ::selection {
-  background: var(--color-accent-soft);
-  color: var(--color-text);
+  background: var(--signal-soft);
+  color: var(--ink);
 }
 
-/* 无内容 */
+/* Utility Card & Layout classes */
+.card {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-title {
+  font-size: var(--font-sm);
+  font-weight: var(--font-semibold);
+  color: var(--ink2);
+  margin-bottom: var(--space-3);
+  letter-spacing: 0.01em;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: var(--space-12);
-  color: var(--color-text-tertiary);
+  color: var(--ink3);
   font-size: var(--font-sm);
 }

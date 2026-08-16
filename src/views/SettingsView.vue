@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// 设置页 — Parchment 主题与偏好设置
+
 import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 
@@ -9,9 +11,20 @@ const autostart = ref(true)
 const autoLaunchAi = ref(true)
 const notifications = ref(true)
 
+function setTheme(t: 'light' | 'dark') {
+  theme.value = t
+  settingsStore.theme = t
+  if (t === 'dark') {
+    document.documentElement.classList.add('dark')
+  } else {
+    document.documentElement.classList.remove('dark')
+  }
+}
+
 onMounted(async () => {
   await settingsStore.load()
   theme.value = settingsStore.theme || 'light'
+  setTheme(theme.value)
 })
 </script>
 
@@ -19,17 +32,18 @@ onMounted(async () => {
   <div class="view">
     <div class="page-head">
       <h1 class="page-title">设置</h1>
+      <p class="page-sub">工作站偏好设置与外观主题</p>
     </div>
 
     <div class="settings">
-      <!-- 通用 -->
+      <!-- 通用设置 -->
       <div class="section">
-        <div class="section-label">通用</div>
+        <div class="section-label">通用偏好</div>
         <div class="setting-list">
           <div class="setting-item">
             <div class="setting-info">
               <span class="setting-name">开机自启</span>
-              <span class="setting-desc">登录 Mac 后自动打开 Anvil</span>
+              <span class="setting-desc">登录 Mac 后自动后台启动 Anvil 工作站</span>
             </div>
             <label class="switch">
               <input type="checkbox" v-model="autostart" />
@@ -38,8 +52,8 @@ onMounted(async () => {
           </div>
           <div class="setting-item">
             <div class="setting-info">
-              <span class="setting-name">自动运行</span>
-              <span class="setting-desc">打开 Anvil 后自动启动 AI</span>
+              <span class="setting-name">自动就绪大脑</span>
+              <span class="setting-desc">打开 Anvil 时自动启动本地 AI 守卫与推理端点</span>
             </div>
             <label class="switch">
               <input type="checkbox" v-model="autoLaunchAi" />
@@ -48,8 +62,8 @@ onMounted(async () => {
           </div>
           <div class="setting-item">
             <div class="setting-info">
-              <span class="setting-name">通知</span>
-              <span class="setting-desc">运行状态变化时发送通知</span>
+              <span class="setting-name">桌面通知</span>
+              <span class="setting-desc">模型切换或微调训练完成时发送通知</span>
             </div>
             <label class="switch">
               <input type="checkbox" v-model="notifications" />
@@ -59,46 +73,42 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 外观 -->
+      <!-- 外观设置 -->
       <div class="section">
-        <div class="section-label">外观</div>
+        <div class="section-label">外观视觉</div>
         <div class="setting-list">
           <div class="setting-item">
             <div class="setting-info">
-              <span class="setting-name">主题</span>
-              <span class="setting-desc">亮色 / 暗色</span>
+              <span class="setting-name">Parchment 色调</span>
+              <span class="setting-desc">暖纸亮色 (Warm Paper) / 暖石暗色 (Dark Paper)</span>
             </div>
             <div class="theme-toggle">
               <button
                 class="theme-btn"
                 :class="{ active: theme === 'light' }"
-                @click="theme = 'light'"
-              >亮色</button>
+                @click="setTheme('light')"
+              >暖纸亮色</button>
               <button
                 class="theme-btn"
                 :class="{ active: theme === 'dark' }"
-                @click="theme = 'dark'"
-              >暗色</button>
+                @click="setTheme('dark')"
+              >暖石暗色</button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 关于 -->
+      <!-- 关于信息 -->
       <div class="section">
-        <div class="section-label">关于</div>
+        <div class="section-label">关于 Anvil</div>
         <div class="setting-list">
           <div class="setting-item about-item">
-            <div class="about-logo">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-              </svg>
-            </div>
+            <div class="about-logo">A</div>
             <div class="about-info">
-              <span class="about-name">Anvil</span>
-              <span class="about-ver">v0.1.0</span>
+              <span class="about-name">Anvil 本地 AI 工作站</span>
+              <span class="about-ver">v0.1.0 · Parchment v3.2</span>
             </div>
-            <span class="about-desc">你的本地 AI 工作站</span>
+            <span class="about-desc">离线独立 · 零 API 费用 · 全 GPU 加速</span>
           </div>
         </div>
       </div>
@@ -108,40 +118,45 @@ onMounted(async () => {
 
 <style scoped>
 .view {
-  padding: var(--space-8) var(--space-8);
-  max-width: 560px;
+  padding: 32px 40px;
+  max-width: 600px;
 }
 
 .page-head {
-  margin-bottom: var(--space-6);
+  margin-bottom: 24px;
 }
 
 .page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
+  font-size: var(--font-xl);
+  font-weight: var(--font-bold);
+  color: var(--ink);
 }
 
-/* 设置分组 */
+.page-sub {
+  font-size: var(--font-sm);
+  color: var(--ink3);
+  margin-top: 2px;
+}
+
 .settings {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: 24px;
 }
 
 .section-label {
-  font-size: var(--font-2xs);
+  font-size: 11px;
   font-weight: var(--font-semibold);
-  color: var(--color-text-tertiary);
+  color: var(--ink3);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: var(--space-3);
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
 }
 
 .setting-list {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -149,8 +164,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-soft);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
 }
 
 .setting-item:last-child {
@@ -160,25 +175,23 @@ onMounted(async () => {
 .setting-info {
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
 
 .setting-name {
   font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text);
+  font-weight: var(--font-semibold);
+  color: var(--ink);
 }
 
 .setting-desc {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: var(--font-xs);
+  color: var(--ink3);
 }
 
-/* 开关 */
 .switch {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 40px;
+  height: 22px;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -193,100 +206,93 @@ onMounted(async () => {
 .switch-track {
   position: absolute;
   inset: 0;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 11px;
   transition: all var(--transition-base);
 }
 
 .switch input:checked + .switch-track {
-  background: var(--color-signal);
-  border-color: var(--color-signal);
+  background: var(--signal);
+  border-color: var(--signal);
 }
 
 .switch-track::after {
   content: '';
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   left: 2px;
   top: 2px;
-  background: var(--color-bg);
+  background: var(--raised);
   border-radius: 50%;
   transition: transform var(--transition-base);
 }
 
 .switch input:checked + .switch-track::after {
-  transform: translateX(16px);
+  transform: translateX(18px);
 }
 
-/* 主题切换 */
 .theme-toggle {
   display: flex;
-  gap: 0;
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .theme-btn {
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--font-2xs);
-  font-weight: var(--font-medium);
-  font-family: inherit;
+  padding: 6px 12px;
+  font-size: var(--font-xs);
+  font-weight: var(--font-semibold);
   cursor: pointer;
   border: none;
-  color: var(--color-text-tertiary);
-  background: var(--color-bg);
+  color: var(--ink3);
+  background: var(--surface);
   transition: all var(--transition-fast);
 }
 
 .theme-btn.active {
-  color: var(--color-bg);
-  background: var(--color-signal);
+  color: var(--raised);
+  background: var(--signal);
 }
 
-.theme-btn:first-child {
-  border-right: 1px solid var(--color-border-soft);
-}
-
-/* 关于 */
 .about-item {
-  gap: var(--space-3);
+  gap: 14px;
 }
 
 .about-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--color-signal-soft);
-  color: var(--color-signal);
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  background: var(--signal);
+  color: var(--raised);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-weight: var(--font-bold);
+  font-size: var(--font-md);
   flex-shrink: 0;
 }
 
 .about-info {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 0;
   flex: 1;
 }
 
 .about-name {
   font-size: var(--font-sm);
-  font-weight: var(--font-semibold);
+  font-weight: var(--font-bold);
+  color: var(--ink);
 }
 
 .about-ver {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: var(--font-xs);
+  color: var(--ink3);
 }
 
 .about-desc {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: var(--font-xs);
+  color: var(--ink3);
 }
 </style>
