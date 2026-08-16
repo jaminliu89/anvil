@@ -1,67 +1,108 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 
-interface Tool {
-  id: string
-  name: string
-  desc: string
-  connected: boolean
-  since: string
-}
+const AGENTS = [
+  { id: 'claude', name: 'Claude Code', desc: 'Anthropic 编码 Agent（需安装）' },
+  { id: 'codex', name: 'Codex', desc: 'OpenAI 编码 Agent（需安装）' },
+  { id: 'hermes', name: 'Hermes', desc: 'Nous 研究 Agent' },
+  { id: 'pi', name: 'PI', desc: '轻量级开源编码 Agent' },
+  { id: 'openclaw', name: 'OpenClaw', desc: '开源编码 Agent' },
+  { id: 'opencode', name: 'OpenCode', desc: '开源编码 Agent' },
+]
 
-const tools = ref<Tool[]>([
-  { id: 'browser', name: '浏览器', desc: '联网搜索、抓取网页内容', connected: true, since: '2 小时 15 分钟' },
-  { id: 'files', name: '文件', desc: '读取和编辑本地文件', connected: true, since: '2 小时 15 分钟' },
-  { id: 'code', name: '代码', desc: '运行代码片段', connected: false, since: '' },
-  { id: 'image', name: '图像', desc: '生成和识别图片', connected: false, since: '' },
-])
+const unslothAlive = ref(false)
+const loading = ref(true)
+const starting = ref<Record<string, boolean>>({})
+const started = ref<Record<string, string>>({})
 
-function toggleTool(id: string) {
-  const tool = tools.value.find(t => t.id === id)
-  if (!tool) return
-  tool.connected = !tool.connected
-  if (tool.connected) {
-    tool.since = '刚刚'
-  } else {
-    tool.since = ''
+async function checkUnsloth() {
+  try {
+    const r = await fetch('http://127.0.0.1:18443/unsloth/status')
+    const data = await r.json()
+    unslothAlive.value = data.alive
+  } catch {
+    unslothAlive.value = false
+  } finally {
+    loading.value = false
   }
 }
+
+async function startAgent(id: string) {
+  starting.value[id] = true
+  try {
+    const r = await fetch(`http://127.0.0.1:18443/unsloth/start/${id}`, { method: 'POST' })
+    const data = await r.json()
+    if (data.ok) {
+      started.value[id] = data.message || '已启动'
+    } else {
+      started.value[id] = '启动失败'
+    }
+  } catch {
+    started.value[id] = '启动失败'
+  } finally {
+    starting.value[id] = false
+  }
+}
+
+function openUnsloth() {
+  window.open('unsloth://', '_blank')
+}
+
+onMounted(() => {
+  checkUnsloth()
+})
 </script>
 
 <template>
   <div class="view">
     <div class="page-head">
       <h1 class="page-title">连接</h1>
-      <p class="page-sub">管理 AI 可调用的外部工具</p>
+      <p class="page-sub">通过 Unsloth 桥接编码 Agent</p>
     </div>
 
-    <div class="section">
-      <div class="summary">
-        <span class="summary-count">已连接 {{ tools.filter(t => t.connected).length }} / {{ tools.length }}</span>
+    <div class="card status-card">
+      <div class="status-row">
+        <span class="label">Unsloth 工坊</span>
+        <span v-if="loading" class="badge badge-pending">检测中</span>
+        <span v-else-if="unslothAlive" class="badge badge-online">在线</span>
+        <span v-else class="badge badge-offline">离线</span>
       </div>
+      <p v-if="!unslothAlive && !loading" class="offline-hint">
+        需要先启动 Unsloth Desktop 才能桥接 Agent
+      </p>
+      <button v-if="!unslothAlive && !loading" class="btn btn-primary" @click="openUnsloth()">
+        启动 Unsloth Desktop
+      </button>
     </div>
 
-    <div class="tool-list">
-      <div
-        v-for="tool in tools"
-        :key="tool.id"
-        class="tool-item"
-      >
-        <div class="tool-left">
-          <span class="tool-dot" :class="{ online: tool.connected }"></span>
-          <div class="tool-info">
-            <span class="tool-name">{{ tool.name }}</span>
-            <span class="tool-desc">{{ tool.desc }}</span>
+    <div v-if="unslothAlive" class="section-head">
+      <h2 class="section-title">可用 Agent</h2>
+    </div>
+
+    <div v-if="unslothAlive" class="agent-list">
+      <div v-for="agent in AGENTS" :key="agent.id" class="agent-item">
+        <div class="agent-left">
+          <div class="agent-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
+              <path d="M16 14H8a4 4 0 0 0-4 4v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2a4 4 0 0 0-4-4z"/>
+            </svg>
+          </div>
+          <div class="agent-info">
+            <span class="agent-name">{{ agent.name }}</span>
+            <span class="agent-desc">{{ agent.desc }}</span>
           </div>
         </div>
-        <div class="tool-right">
-          <span v-if="tool.connected" class="tool-since">{{ tool.since }}</span>
+        <div class="agent-right">
+          <span v-if="started[agent.id]" class="started-label">{{ started[agent.id] }}</span>
           <button
-            class="toggle-btn"
-            :class="{ connected: tool.connected }"
-            @click="toggleTool(tool.id)"
+            v-else
+            class="btn btn-secondary"
+            :class="{ loading: starting[agent.id] }"
+            :disabled="starting[agent.id]"
+            @click="startAgent(agent.id)"
           >
-            {{ tool.connected ? '断开' : '连接' }}
+            {{ starting[agent.id] ? '启动中...' : '启动' }}
           </button>
         </div>
       </div>
@@ -71,141 +112,111 @@ function toggleTool(id: string) {
 
 <style scoped>
 .view {
-  padding: var(--space-8) var(--space-8);
+  padding: var(--space-8);
   max-width: 600px;
 }
-
-.page-head {
-  margin-bottom: var(--space-6);
-}
-
+.page-head { margin-bottom: var(--space-6); }
 .page-title {
   font-size: var(--font-lg);
   font-weight: var(--font-semibold);
   letter-spacing: -0.01em;
 }
-
 .page-sub {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
   margin-top: var(--space-1);
 }
 
-.section {
+.card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
   margin-bottom: var(--space-4);
 }
-
-.summary {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-  letter-spacing: 0.03em;
-}
-
-.tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--color-border-soft);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.tool-item {
+.status-card .status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.label { font-size: var(--font-sm); font-weight: var(--font-medium); }
+
+.badge {
+  font-size: var(--font-2xs);
+  font-weight: var(--font-medium);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+}
+.badge-online {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+.badge-offline {
+  background: color-mix(in srgb, var(--color-text-tertiary) 15%, transparent);
+  color: var(--color-text-tertiary);
+}
+.badge-pending {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.offline-hint {
+  font-size: var(--font-xs); color: var(--color-text-tertiary);
+  margin: var(--space-3) 0 0 0;
+}
+
+.btn {
+  height: 32px; padding: 0 var(--space-4);
+  font-size: var(--font-xs); font-weight: var(--font-medium);
+  border-radius: var(--radius-sm); cursor: pointer;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+.btn-primary {
+  margin-top: var(--space-3);
+  background: var(--color-signal); color: var(--color-bg);
+  border: none;
+}
+.btn-primary:hover { opacity: 0.85; }
+.btn-secondary {
+  background: var(--color-bg-tertiary); color: var(--color-text);
+  border: 1px solid var(--color-border-soft);
+}
+.btn-secondary:hover { border-color: var(--color-border); }
+.btn-secondary:disabled { opacity: 0.5; cursor: default; }
+.loading { opacity: 0.7; }
+
+.section-head { margin-bottom: var(--space-3); }
+.section-title {
+  font-size: var(--font-sm); font-weight: var(--font-medium);
+}
+
+.agent-list {
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--color-border-soft);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md); overflow: hidden;
+}
+.agent-item {
+  display: flex; align-items: center;
+  justify-content: space-between;
   padding: var(--space-3) var(--space-4);
   background: var(--color-bg-secondary);
-  transition: background var(--transition-fast);
 }
-
-.tool-item:hover {
+.agent-left { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.agent-icon {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
   background: var(--color-bg-tertiary);
-}
-
-.tool-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.tool-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  flex-shrink: 0;
-  transition: all var(--transition-base);
-}
-
-.tool-dot.online {
-  background: var(--color-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 20%, transparent);
-}
-
-.tool-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.tool-name {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text);
-}
-
-.tool-desc {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tool-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
-
-.tool-since {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.toggle-btn {
-  height: 26px;
-  padding: 0 var(--space-3);
-  font-size: var(--font-2xs);
-  font-weight: var(--font-medium);
   border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  font-family: inherit;
-  border: 1px solid var(--color-border-soft);
-  background: var(--color-bg);
-  color: var(--color-signal);
+  flex-shrink: 0;
 }
-
-.toggle-btn:hover {
-  border-color: var(--color-border);
-  background: var(--color-bg-tertiary);
-}
-
-.toggle-btn.connected {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-  border-color: var(--color-border-soft);
-}
-
-.toggle-btn.connected:hover {
-  color: var(--color-error);
-  border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border-soft));
+.agent-icon svg { color: var(--color-text-tertiary); }
+.agent-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.agent-name { font-size: var(--font-sm); font-weight: var(--font-medium); color: var(--color-text); }
+.agent-desc { font-size: var(--font-2xs); color: var(--color-text-tertiary); }
+.agent-right { display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0; }
+.started-label {
+  font-size: var(--font-2xs); color: var(--color-success);
 }
 </style>

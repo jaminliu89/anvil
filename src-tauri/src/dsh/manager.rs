@@ -69,7 +69,7 @@ impl SidecarManager {
         }
     }
 
-    /// 启动 sidecar（bridge.py）
+    /// 启动 sidecar
     pub async fn start(&self) -> Result<u16, String> {
         {
             let status = self.status.lock().unwrap();
@@ -94,32 +94,45 @@ impl SidecarManager {
 
         let target = self.get_target();
 
-        // 开发模式：源码路径；打包后：resource 目录
-        let script_dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sidecar/bridge.py");
-        let script = if script_dev.exists() {
-            script_dev
+        // 查找打包二进制或源码脚本
+        let binary = find_binary();
+        let child_result = if let Some(bin_path) = &binary {
+            log::info!("using bundled sidecar: {}", bin_path.display());
+            std::process::Command::new(bin_path)
+                .arg("--port")
+                .arg(SIDECAR_PORT.to_string())
+                .arg("--target")
+                .arg(&target)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
         } else {
-            // 打包形态： Contents/Resources/sidecar/bridge.py
-            std::path::PathBuf::from("sidecar/bridge.py")
+            // 开发模式：源码路径；打包后：resource 目录
+            let script_dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("sidecar/bridge.py");
+            let script = if script_dev.exists() {
+                script_dev
+            } else {
+                std::path::PathBuf::from("sidecar/bridge.py")
+            };
+            let python = find_python();
+            log::info!("no bundled sidecar, using python3: {}", python);
+            std::process::Command::new(&python)
+                .arg(script.to_string_lossy().to_string())
+                .arg("--port")
+                .arg(SIDECAR_PORT.to_string())
+                .arg("--target")
+                .arg(&target)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
         };
 
-        let python = find_python();
-
-        let child = std::process::Command::new(&python)
-            .arg(script.to_string_lossy().to_string())
-            .arg("--port")
-            .arg(SIDECAR_PORT.to_string())
-            .arg("--target")
-            .arg(&target)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                let msg = format!("启动守卫服务失败: {}", e);
-                self.set_status(SidecarStatus::Error { message: msg.clone() });
-                msg
-            })?;
+        let child = child_result.map_err(|e| {
+            let msg = format!("启动守卫服务失败: {}", e);
+            self.set_status(SidecarStatus::Error { message: msg.clone() });
+            msg
+        })?;
 
         *self.child.lock().unwrap() = Some(child);
 
@@ -179,6 +192,24 @@ impl SidecarManager {
         }
         *child_guard = None;
     }
+}
+
+/// 查找打包的 sidecar 二进制
+fn find_binary() -> Option<std::path::PathBuf> {
+    // 开发模式：dist 目录
+    let dev_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("sidecar/dist/anvil-bridge");
+    if dev_bin.exists() {
+        return Some(dev_bin);
+    }
+    // 打包形态：同目录
+    if let Ok(exe) = std::env::current_exe() {
+        let bundled = exe.parent().unwrap().join("anvil-bridge");
+        if bundled.exists() {
+            return Some(bundled);
+        }
+    }
+    None
 }
 
 fn find_python() -> String {

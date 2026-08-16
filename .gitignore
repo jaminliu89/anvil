@@ -11,6 +11,8 @@ node_modules
 src-tauri/target
 src-tauri/Cargo.lock
 src-tauri/gen
+src-tauri/sidecar/build/
+src-tauri/sidecar/dist/
 
 # 日志
 *.log
