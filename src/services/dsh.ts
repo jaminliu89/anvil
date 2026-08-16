@@ -151,3 +151,54 @@ export async function sidecarAlive(): Promise<boolean> {
     return false
   }
 }
+
+// ---- Unsloth 训练 API ----
+
+export interface TrainConfig {
+  model: string
+  dataset?: string
+  local_dataset?: string
+  epochs?: number
+  learning_rate?: number
+  lora_r?: number
+  max_seq_length?: number
+  batch_size?: number
+  output_dir?: string
+}
+
+export interface TrainStatus {
+  running: boolean
+  pid: number | null
+  model: string
+  step: number
+  loss: number
+  elapsed_s: number
+  log: string[]
+}
+
+export interface Checkpoint {
+  name?: string
+  path?: string
+  size?: string
+  [key: string]: unknown
+}
+
+/** 启动训练 */
+export function startTrain(config: TrainConfig) {
+  return post<{ ok: boolean; pid: number }>('/unsloth/train', config, 10000)
+}
+
+/** 训练状态 */
+export function trainStatus() {
+  return get<TrainStatus>('/unsloth/train-status')
+}
+
+/** 停止训练 */
+export function stopTrain() {
+  return post<{ ok: boolean; message: string }>('/unsloth/train-stop', {}, 5000)
+}
+
+/** 检查点列表 */
+export function listCheckpoints() {
+  return get<{ ok: boolean; checkpoints: Checkpoint[] }>('/unsloth/checkpoints')
+}

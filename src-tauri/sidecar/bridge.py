@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Anvil sidecar — DSH 守卫桥.
+"""Anvil sidecar — DSH 守卫桥 + Unsloth CLI 网关。
 
 包 deepseek_harness，把对话/体检/预估暴露为 HTTP。
 所有请求经守卫（reasoning 分离 / tool_calls 抢救 / usage 归一化），再打到推理端点。
 
-端点:
-  GET  /health            存活
-  POST /chat              非流式对话（守卫全开）
-  POST /stream            流式对话（SSE）
-  GET  /doctor            环境体检
-  POST /estimate          发送前预估
+DSH 端点:
+  GET  /health                存活
+  POST /chat                  非流式对话（守卫全开）
+  POST /stream                流式对话（SSE）
+  GET  /doctor                环境体检
+  POST /estimate              发送前预估
+  GET  /salvage-log           抢救日志
+
+Unsloth 网关:
+  GET  /unsloth/status        Unsloth 运行状态
+  GET  /unsloth/checkpoints   已训练的检查点列表
+  POST /unsloth/start/<agent> 启动编码 Agent 桥接
+  POST /unsloth/train         启动训练
+  GET  /unsloth/train-status  训练进度
+  POST /unsloth/train-stop    停止训练
 
 启动:
   python3 bridge.py --port 18443 --target http://localhost:18080/v1
@@ -19,10 +28,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
+import subprocess
 import sys
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.request import urlopen, Request
 
 try:
     from deepseek_harness import DeepSeekHarness, estimate_cache_hit, __version__ as dsh_version
@@ -30,17 +43,23 @@ except ImportError:
     print("FATAL: deepseek_harness not installed", file=sys.stderr)
     sys.exit(1)
 
+UNSLOTH_CLI = os.path.expanduser("~/.unsloth/studio/unsloth_studio/bin/unsloth")
+UNSLOTH_HEALTH = "http://127.0.0.1:8888/api/health"
+
+# 训练状态（全局）
+TRAIN_STATE: dict = {"running": False, "pid": None, "model": "", "started_at": 0, "log": [], "step": 0, "loss": 0.0}
+
 
 def make_harness(target: str, api_key: str) -> DeepSeekHarness:
     return DeepSeekHarness(api_key=api_key, base_url=target)
 
 
 class Handler(BaseHTTPRequestHandler):
-    harness: "DeepSeekHarness | None" = None  # injected
+    harness: DeepSeekHarness | None = None  # injected
     salvage_log: list[dict] = []
     model_id: str = ""
 
-    def log_message(self, format, *args):  # type: ignore[no-untyped-def]
+    def log_message(self, format, *args):
         pass
 
     def _json(self, code: int, obj) -> None:
@@ -68,6 +87,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/salvage-log":
             self._json(200, {"log": Handler.salvage_log[-50:]})
             return
+        if self.path == "/unsloth/status":
+            self._unsloth_status()
+            return
+        if self.path.startswith("/unsloth/checkpoints"):
+            self._unsloth_checkpoints()
+            return
+        if self.path == "/unsloth/train-status":
+            self._unsloth_train_status()
+            return
         self._json(404, {"error": "not found"})
 
     # ---- POST ----
@@ -79,6 +107,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream()
             elif self.path == "/estimate":
                 self._estimate()
+            elif self.path.startswith("/unsloth/start/"):
+                self._unsloth_start()
+            elif self.path == "/unsloth/train":
+                self._unsloth_train()
+            elif self.path == "/unsloth/train-stop":
+                self._unsloth_train_stop()
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:
@@ -143,7 +177,6 @@ class Handler(BaseHTTPRequestHandler):
                 messages=messages,
                 **kwargs,
             ):
-                # chunk: OpenAI 流式增量
                 msg = chunk.get("message") or {}
                 piece = msg.get("content") or ""
                 think = msg.get("reasoning_content") or ""
@@ -158,13 +191,10 @@ class Handler(BaseHTTPRequestHandler):
     # ---- 体检 ----
     def _doctor(self):
         checks = []
-        # 1. harness 库
         checks.append({"name": "守卫库", "ok": True, "detail": f"deepseek-harness {dsh_version}"})
-        # 2. 端点可达
         try:
             import urllib.request
             base = str(getattr(getattr(self.harness, "_oai", None), "base_url", "")).rstrip("/")
-            # base_url 可能已含 /v1
             probe_urls = [f"{base}/models"]
             if not base.endswith("/v1"):
                 probe_urls.append(f"{base}/v1/models")
@@ -182,7 +212,6 @@ class Handler(BaseHTTPRequestHandler):
             checks.append({"name": "大脑在线", "ok": ok, "detail": base if ok else last_err})
         except Exception as e:
             checks.append({"name": "大脑在线", "ok": False, "detail": str(e)})
-        # 3. 1-token 试调
         try:
             t0 = time.time()
             r = self.harness.chat(
@@ -204,6 +233,179 @@ class Handler(BaseHTTPRequestHandler):
         est = estimate_cache_hit(prev, req.get("messages") or [])
         self._json(200, est if isinstance(est, dict) else {"estimate": est})
 
+    # ---- Unsloth 状态 ----
+    def _unsloth_status(self):
+        alive = False
+        body = {"status": "offline"}
+        try:
+            with urlopen(UNSLOTH_HEALTH, timeout=3) as r:
+                if r.status == 200:
+                    alive = True
+                    body = json.loads(r.read())
+        except Exception:
+            pass
+        self._json(200, {
+            "alive": alive,
+            "detail": body if isinstance(body, dict) else body,
+        })
+
+    # ---- Unsloth 检查点 ----
+    def _unsloth_checkpoints(self):
+        if not os.path.isfile(UNSLOTH_CLI):
+            self._json(200, {"ok": True, "checkpoints": [], "note": "unsloth CLI not found"})
+            return
+        try:
+            r = subprocess.run(
+                [UNSLOTH_CLI, "list-checkpoints", "--json"],
+                capture_output=True, text=True, timeout=30,
+            )
+            data = json.loads(r.stdout) if r.stdout.strip() else []
+            self._json(200, {"ok": True, "checkpoints": data})
+        except subprocess.TimeoutExpired:
+            self._json(200, {"ok": True, "checkpoints": [], "note": "timeout"})
+        except Exception as e:
+            self._json(200, {"ok": False, "checkpoints": [], "error": str(e)})
+
+    # ---- Unsloth 启动 Agent 桥接 ----
+    def _unsloth_start(self):
+        agent = self.path.split("/unsloth/start/")[-1].split("/")[0]
+        valid = {"claude", "codex", "hermes", "pi", "openclaw", "opencode"}
+        if agent not in valid:
+            self._json(400, {"error": f"unknown agent '{agent}', valid: {', '.join(sorted(valid))}"})
+            return
+        if not os.path.isfile(UNSLOTH_CLI):
+            self._json(500, {"error": "unsloth CLI not found"})
+            return
+        try:
+            subprocess.Popen(
+                [UNSLOTH_CLI, "start", agent],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._json(200, {"ok": True, "agent": agent, "message": f"{agent} bridge starting"})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    # ---- Unsloth 训练 ----
+    def _unsloth_train(self):
+        if TRAIN_STATE["running"]:
+            self._json(409, {"error": "训练已在运行中"})
+            return
+        if not os.path.isfile(UNSLOTH_CLI):
+            self._json(500, {"error": "unsloth CLI not found"})
+            return
+
+        req = self._read_body()
+        model = req.get("model", "")
+        dataset = req.get("dataset", "")
+        local_dataset = req.get("local_dataset", "")
+        epochs = req.get("epochs", 1)
+        lr = req.get("learning_rate", 2e-4)
+        lora_r = req.get("lora_r", 16)
+        output_dir = req.get("output_dir", os.path.expanduser("~/.unsloth/outputs"))
+        max_seq_length = req.get("max_seq_length", 4096)
+        batch_size = req.get("batch_size", 2)
+
+        if not model:
+            self._json(400, {"error": "model required"})
+            return
+        if not dataset and not local_dataset:
+            self._json(400, {"error": "dataset or local_dataset required"})
+            return
+
+        cmd = [UNSLOTH_CLI, "train", "--model", model]
+        if dataset:
+            cmd += ["--dataset", dataset]
+        if local_dataset:
+            cmd += ["--local-dataset", local_dataset]
+        cmd += [
+            "--num-epochs", str(epochs),
+            "--learning-rate", str(lr),
+            "--lora-r", str(lora_r),
+            "--max-seq-length", str(max_seq_length),
+            "--batch-size", str(batch_size),
+            "--output-dir", output_dir,
+        ]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            TRAIN_STATE["running"] = True
+            TRAIN_STATE["pid"] = proc.pid
+            TRAIN_STATE["model"] = model
+            TRAIN_STATE["started_at"] = time.time()
+            TRAIN_STATE["log"] = []
+            TRAIN_STATE["step"] = 0
+            TRAIN_STATE["loss"] = 0.0
+
+            # 后台线程读日志
+            def _reader():
+                for line in iter(proc.stdout.readline, ""):
+                    TRAIN_STATE["log"].append(line.rstrip())
+                    # 解析 step/loss
+                    if "step=" in line or "Step" in line or "loss=" in line.lower() or "loss:" in line.lower():
+                        try:
+                            # 尝试从常见格式提取
+                            parts = line.split()
+                            for p in parts:
+                                if p.startswith("step="):
+                                    TRAIN_STATE["step"] = int(p.split("=")[1])
+                                elif p.startswith("Step=") or p.startswith("Step:"):
+                                    TRAIN_STATE["step"] = int(p.split("=")[1].split("/")[0])
+                                elif "loss=" in p.lower():
+                                    val = p.split("=")[1].strip(",")
+                                    TRAIN_STATE["loss"] = float(val)
+                                elif "loss:" in p.lower() or p.startswith("loss:"):
+                                    val = p.split(":")[1].strip(" ,")
+                                    TRAIN_STATE["loss"] = float(val)
+                        except (ValueError, IndexError):
+                            pass
+                    # 最多保留 500 行
+                    if len(TRAIN_STATE["log"]) > 500:
+                        TRAIN_STATE["log"] = TRAIN_STATE["log"][-500:]
+                proc.wait()
+                TRAIN_STATE["running"] = False
+
+            t = threading.Thread(target=_reader, daemon=True)
+            t.start()
+
+            self._json(200, {"ok": True, "pid": proc.pid, "model": model, "epochs": epochs})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    # ---- 训练状态 ----
+    def _unsloth_train_status(self):
+        elapsed = round(time.time() - TRAIN_STATE["started_at"], 1) if TRAIN_STATE["running"] else 0
+        self._json(200, {
+            "running": TRAIN_STATE["running"],
+            "pid": TRAIN_STATE["pid"],
+            "model": TRAIN_STATE["model"],
+            "step": TRAIN_STATE["step"],
+            "loss": TRAIN_STATE["loss"],
+            "elapsed_s": elapsed,
+            "log": TRAIN_STATE["log"][-30:],
+        })
+
+    # ---- 停止训练 ----
+    def _unsloth_train_stop(self):
+        if not TRAIN_STATE["running"] or not TRAIN_STATE["pid"]:
+            self._json(200, {"ok": True, "message": "没有正在运行的训练"})
+            return
+        try:
+            os.kill(TRAIN_STATE["pid"], signal.SIGTERM)
+            TRAIN_STATE["running"] = False
+            TRAIN_STATE["log"].append("[stopped by user]")
+            self._json(200, {"ok": True, "message": "训练已停止"})
+        except ProcessLookupError:
+            TRAIN_STATE["running"] = False
+            self._json(200, {"ok": True, "message": "进程已结束"})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -217,11 +419,9 @@ def main():
     Handler.harness = h
     Handler.model_id = args.model
 
-    # 自动发现模型 id
     if not Handler.model_id:
         try:
-            import urllib.request
-            with urllib.request.urlopen(f"{args.target}/models", timeout=5) as r:
+            with urlopen(f"{args.target.rstrip('/')}/models", timeout=5) as r:
                 data = json.load(r)
             models = [m.get("id") for m in data.get("data", []) if m.get("id")]
             Handler.model_id = models[0] if models else ""

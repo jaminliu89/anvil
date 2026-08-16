@@ -7,7 +7,7 @@
 - [x] G1.2 品牌统一 Anvil（tauri.conf / index.html / Cargo.toml / tray / lib.rs）
 - [x] G1.3 package.json 改名 anvil
 - [x] G1.4 删除旧视图 + 旧组件目录
-- [ ] G1.5 ARCHITECTURE.md 落地
+- [x] G1.5 ARCHITECTURE.md 落地
 
 ## G2 核心：对话链路（最重要）
 - [x] G2.1 sidecar bridge.py（HTTP 服务包 DeepSeekHarness）
@@ -23,19 +23,21 @@
 ## G4 高级模式
 - [x] G4.1 模式切换（settings store + 侧边栏过滤）
 - [x] G4.2 守卫面板页（doctor/validate/probe/抢救日志）
-- [x] G4.3 训练页接 Unsloth API（bridge 网关 + TrainView）
-- [x] G4.4 连接页（agent 卡片 + unsloth start 按钮 + 三端状态检测）
+- [x] G4.3 训练页接 Unsloth API — 傻瓜化训练 UI（模型选择/数据集选/LoRA参数/实时进度/检查点）
+- [ ] G4.4 启动按钮改 spawn_sidecar（ConnectView → unsloth start claude --config unsloth_config.yaml）
+- [x] G4.4a 连接页（agent 卡片 + unsloth 状态检测 + 三端状态）
 
 ## G5 打包与验收
-- [ ] G5.1 ARCHITECTURE.md 落地
-- [ ] G5.2 pyinstaller 打包 sidecar
-- [ ] G5.3 tauri.conf externalBin 挂 sidecar
-- [ ] G5.4 全链路验收（Anvil 打开 → 对话 → 守卫生效 → 体检绿）
-- [ ] G5.5 tauri:build 出 app
+- [x] G5.1 ARCHITECTURE.md 落地（三端架构 + 规则引擎宪法）
+- [x] G5.2 pyinstaller 打包 sidecar（anvil-bridge ~400MB）
+- [x] G5.3 tauri.conf externalBin 挂 sidecar + manager.rs find_binary()
+- [x] G5.4 tauri.conf.json 已为 Anvil（productName / identifier）
+- [ ] G5.5 全链路验收（Anvil 打开 → 对话 → 守卫生效 → 体检绿）
+- [x] G5.6 tauri build 出 .app + .dmg（5.4MB aarch64）
 
 ## 验收标准（终局）
 1. 普通用户打开 Anvil，60 秒内完成第一次对话
 2. UI 扫描零违禁词（grep 词表为空）
 3. 守卫真实生效（reasoning 分离 + usage 归一化可在响应中验证）
 4. 切换端点（:18080 ↔ :8888）对话不断
-5. tauri:build 产物可双击运行
+5. tauri build 产物可双击运行
