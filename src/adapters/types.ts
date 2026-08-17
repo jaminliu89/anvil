@@ -19,6 +19,22 @@ export interface AdapterStatus {
   message: string
 }
 
+export type ExecutionEntryType =
+  | 'message' | 'system' | 'plan' | 'execution' | 'approval'
+  | 'diff' | 'pr' | 'log' | 'mcp-result' | 'train'
+
+// 执行结果 — adapter.execute() 的返回值
+export interface ExecutionResult {
+  type: ExecutionEntryType
+  title?: string
+  content: string
+  steps?: { id: string; title: string; status: 'pending' | 'approved' | 'running' | 'done' | 'failed' }[]
+  sessionId?: string
+  branch?: string
+  approved?: boolean
+  data?: Record<string, unknown>
+}
+
 // 适配器接口 — 每个工具/平台实现此接口
 export interface Adapter {
   id: string
@@ -29,7 +45,7 @@ export interface Adapter {
 
   chat?(history: Message[], prompt: string, opts?: ChatOpts): Promise<ChatResult>
   execute(command: string, args: string): Promise<ExecutionResult>
-  render(entry: TimelineEntry, container: HTMLElement): void
+  render?(entry: TimelineEntry, container: HTMLElement): void
   status(): Promise<AdapterStatus>
 }
 
@@ -50,19 +66,11 @@ export interface ChatResult {
   usage?: { cacheHitRate?: number; totalTokens?: number; elapsedMs?: number }
 }
 
-export interface ExecutionResult {
-  type: 'chat' | 'plan' | 'execution' | 'approval' | 'diff' | 'pr' | 'log' | 'system' | 'mcp-result'
-  title?: string
-  content: string
-  steps?: { id: string; title: string; status: 'pending' | 'approved' | 'running' | 'done' | 'failed' }[]
-  data?: Record<string, unknown>
-}
-
 // 时间线条目 — 统一会话流中的一条
 export interface TimelineEntry {
   id: string
   timestamp: number
   adapterId: string
-  type: 'message' | 'plan' | 'execution' | 'approval' | 'diff' | 'pr' | 'log' | 'system' | 'mcp-result' | 'train'
+  type: ExecutionEntryType
   data: Record<string, unknown>
 }
