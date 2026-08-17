@@ -155,7 +155,12 @@ async function handleSubmit(parsed: Parsed) {
     <div class="messages" ref="messagesEl">
       <div v-if="entries.length === 0" class="empty-state">
         <div class="empty-title">Anvil</div>
-        <div class="empty-sub">打字聊天，斜杠调工具。/switch <适配器> 切换聊天引擎。</div>
+        <div class="empty-sub">打字聊天，斜杠调工具。/switch [id] 切换聊天引擎。</div>
+        <div class="empty-hints">
+          <div class="hint-text">/dock 帮我重构这个工具函数 → 起一个异步编码 session</div>
+          <div class="hint-text">/switch ling → 切换聊天引擎到 Ling</div>
+          <div class="hint-text">🌐 点联网搜索 → 每次提问自动搜索网络</div>
+        </div>
       </div>
 
       <div v-for="entry in entries" :key="entry.id" class="entry"
@@ -165,13 +170,17 @@ async function handleSubmit(parsed: Parsed) {
 
         <div v-else-if="entry.type === 'message'" class="bubble"
              :class="entry.data.role === 'user' ? 'bubble-user' : 'bubble-agent'">
+          <div v-if="entry.data.role !== 'user'" class="model-label">{{ entry.adapterId }}</div>
           <div v-if="entry.data.reasoning && entry.data.role !== 'user'"
                class="think-toggle"
                @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('visible')">
             展开思考</div>
           <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
-          <div v-if="entry.data.role === 'user'" class="content">{{ entry.data.content }}</div>
-          <div v-else class="content" v-html="markdownToHtml(entry.data.content as string)"></div>
+          <div class="message-row">
+            <div v-if="entry.data.role === 'user'" class="content">{{ entry.data.content }}</div>
+            <div v-else class="content" v-html="markdownToHtml(entry.data.content as string)"></div>
+            <div v-if="entry.data.role === 'user'" class="user-avatar">{{ (entry.data.content as string).charAt(0).toUpperCase() }}</div>
+          </div>
         </div>
 
         <div v-else-if="entry.type === 'plan'" class="plan-card">
