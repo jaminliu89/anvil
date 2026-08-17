@@ -5,6 +5,7 @@ import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
+import { markdownToHtml } from '@/utils/markdown'
 
 onMounted(() => { registerAllAdapters() })
 
@@ -168,8 +169,9 @@ async function handleSubmit(parsed: Parsed) {
                class="think-toggle"
                @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('visible')">
             展开思考</div>
-          <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning">{{ entry.data.reasoning }}</div>
-          <div class="content">{{ entry.data.content }}</div>
+          <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+          <div v-if="entry.data.role === 'user'" class="content">{{ entry.data.content }}</div>
+          <div v-else class="content" v-html="markdownToHtml(entry.data.content as string)"></div>
         </div>
 
         <div v-else-if="entry.type === 'plan'" class="plan-card">
@@ -248,4 +250,20 @@ async function handleSubmit(parsed: Parsed) {
 }
 .search-btn.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
 .search-hint { font-size: 11px; color: var(--ink4); }
+
+/* 助手消息 markdown 排版 */
+.content :deep(h1), .content :deep(h2), .content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
+.content :deep(h1) { font-size: 16px; }
+.content :deep(h2) { font-size: 15px; }
+.content :deep(h3) { font-size: 14px; }
+.content :deep(p) { margin: 6px 0; }
+.content :deep(ul), .content :deep(ol) { margin: 6px 0; padding-left: 20px; }
+.content :deep(li) { margin: 2px 0; }
+.content :deep(code) { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; font-family: var(--mono); }
+.content :deep(pre) { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
+.content :deep(pre code) { background: none; border: none; padding: 0; }
+.content :deep(blockquote) { border-left: 3px solid var(--line); padding: 4px 12px; margin: 8px 0; color: var(--ink3); font-style: italic; }
+.content :deep(a) { color: var(--signal); text-decoration: underline; }
+.content :deep(hr) { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+
 </style>

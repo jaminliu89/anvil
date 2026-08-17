@@ -51,33 +51,32 @@ TRAIN_STATE: dict = {"running": False, "pid": None, "model": "", "started_at": 0
 
 
 def _tavily_key() -> str:
-    key = os.environ.get("TAVILY_API_KEY", "")
-    if key:
-        return key
+    k = os.environ.get("TAVILY_API_KEY", "")
+    if k: return k
     try:
         with open(os.path.expanduser("~/.hermes/.env")) as f:
             for line in f:
                 if line.startswith("TAVILY_API_KEY="):
                     return line.strip().split("=", 1)[1]
-    except (FileNotFoundError, OSError):
+    except OSError:
         pass
     return ""
 
-def _tavily_search(query: str, count: int = 5) -> list[dict]:
-    key = _tavily_key()
-    if not key:
-        return [{"error": "TAVILY_API_KEY not set"}]
+def _tavily_search(query: str, count: int = 5) -> list:
+    k = _tavily_key()
+    if not k:
+        return []
     try:
-        req = Request(
-            "https://api.tavily.com/search",
-            data=json.dumps({"api_key": key, "query": query, "max_results": count, "include_answer": False}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
+        req = Request("https://api.tavily.com/search",
+            data=json.dumps({"api_key": k, "query": query, "max_results": count, "include_answer": False}).encode(),
+            headers={"Content-Type": "application/json"})
         with urlopen(req, timeout=15) as r:
             body = json.loads(r.read())
         return body.get("results", [])
     except Exception as e:
-        return [{"error": str(e)}]
+        print(f"tavily error: {e}", file=sys.stderr)
+        return []
+
 
 def make_harness(target: str, api_key: str) -> DeepSeekHarness:
     return DeepSeekHarness(api_key=api_key, base_url=target)
