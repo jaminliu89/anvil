@@ -1,0 +1,15 @@
+with open('/private/tmp/anvil/src-tauri/sidecar/bridge.py') as f:
+    raw = f.read()
+# The bug: `.strip("'\"")` — two separate strings
+# Fix: `.strip("'\"")` — single string with both quotes
+raw = raw.replace(
+    '.strip("\'\'").strip()',  # note: backslash-escaped single quote inside double
+    ".strip(\"'\").strip()"
+)
+raw = raw.replace(
+    '.strip("\\\'\"\").strip()',
+    ".strip(\"'\").strip()"
+)
+with open('/private/tmp/anvil/src-tauri/sidecar/bridge.py', 'w') as f:
+    f.write(raw)
+print('done')

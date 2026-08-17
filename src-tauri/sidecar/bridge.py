@@ -86,7 +86,17 @@ def make_harness(target: str, api_key: str) -> DeepSeekHarness:
 INFERENCE_TARGETS: dict = {
     "ling": os.getenv("ANVIL_TARGET", "http://localhost:18080/v1"),
     "ollama": "http://localhost:11434/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "siliconflow": "https://api.siliconflow.cn/v1",
+    "openai": "https://api.openai.com/v1",
     "lmstudio": "http://localhost:1234/v1",
+}
+
+# API key map for cloud targets
+_TARGET_KEYS = {
+    "deepseek": os.getenv("DEEPSEEK_API_KEY", ""),
+    "siliconflow": os.getenv("SILICONFLOW_API_KEY", ""),
+    "openai": os.getenv("OPENAI_API_KEY", ""),
 }
 
 
@@ -270,9 +280,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"unknown target {name}", "available": list(INFERENCE_TARGETS)})
             return
         url = INFERENCE_TARGETS[name]
+        api_key = _TARGET_KEYS.get(name) or "not-needed"
         try:
             urlopen(f"{url}/models", timeout=3)
-            Handler.harness = make_harness(url, "not-needed")
+            Handler.harness = make_harness(url, api_key)
             Handler.model_id = ""
             # 重新自动发现 model id
             try:
