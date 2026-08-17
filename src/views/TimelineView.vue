@@ -170,6 +170,7 @@ async function handleSubmit(parsed: Parsed) {
 .entry-right { margin-left: auto; }
 .bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; }
 .bubble-user { background: var(--signal); color: var(--canvas); }
+.dark .bubble-user, [data-theme="dark"] .bubble-user { background: #D4D4D4; color: #141415; }
 .bubble-agent { background: var(--surface); border: 1px solid var(--line); color: var(--ink2); }
 .think-toggle { font-size: 12px; color: var(--ink4); cursor: pointer; user-select: none; border-bottom: 1px dashed var(--ink4); display: inline-block; margin-bottom: 4px; padding-bottom: 1px; }
 .reasoning { display: none; font-size: 12px; color: var(--ink3); background: var(--signalSoft); border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
@@ -190,5 +191,6 @@ async function handleSubmit(parsed: Parsed) {
 .step-status.running { background: var(--warning); }
 .approve-btn { padding: 6px 16px; background: var(--signal); color: var(--canvas); border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; margin-top: 12px; }
 .approve-btn:hover { opacity: 0.9; }
+.dark .approve-btn, [data-theme="dark"] .approve-btn { background: #D4D4D4; color: #141415; }
 .plan-approved { font-size: 12px; color: var(--success); margin-top: 12px; }
 </style>
