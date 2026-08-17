@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 
 const settingsStore = useSettingsStore()
@@ -9,9 +9,18 @@ const autostart = ref(true)
 const autoLaunchAi = ref(true)
 const notifications = ref(true)
 
+function applyTheme(t: 'light' | 'dark') {
+  document.documentElement.dataset.theme = t
+  settingsStore.theme = t
+  settingsStore.save()
+}
+
+watch(theme, (t) => applyTheme(t))
+
 onMounted(async () => {
   await settingsStore.load()
   theme.value = settingsStore.theme || 'light'
+  applyTheme(theme.value)
 })
 </script>
 
@@ -96,7 +105,7 @@ onMounted(async () => {
             </div>
             <div class="about-info">
               <span class="about-name">Anvil</span>
-              <span class="about-ver">v0.1.0</span>
+              <span class="about-ver">v0.2.0</span>
             </div>
             <span class="about-desc">你的本地 AI 工作站</span>
           </div>

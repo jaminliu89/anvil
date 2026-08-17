@@ -2,7 +2,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
-import { get } from '@/adapters/registry'
+import { get, all } from '@/adapters/registry'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 
@@ -66,11 +66,12 @@ async function handleSubmit(parsed: Parsed) {
         const result = await adapter.chat(history, parsed.text)
         addEntry('message', currentAdapterId.value, {
           role: 'assistant', content: result.content, reasoning: result.reasoning,
-          elapsed: result.usage?.elapsedMs ? Math.round(result.usage.elapsedMs / 1000) : undefined,
         })
       } catch (e) {
         addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
       }
+    } else {
+      addEntry('system', currentAdapterId.value, { content: '当前适配器不支持聊天。输入 /switch <name> 切换。' })
     }
     busy.value = false
     return
@@ -82,16 +83,31 @@ async function handleSubmit(parsed: Parsed) {
     return
   }
 
-  if (parsed.type === 'command') {
-    addEntry('system', parsed.adapter.id, { content: `/${parsed.command} ${parsed.args}` })
-    try {
-      const result = await parsed.adapter.execute(parsed.command, parsed.args)
-      addEntry(result.type, parsed.adapter.id, result as unknown as Record<string, unknown>)
-    } catch (e) {
-      addEntry('system', parsed.adapter.id, { content: `错误: ${e}` })
+  if (parsed.type === 'builtin') {
+    if (parsed.command === 'switch') {
+      const targetId = parsed.args
+      const target = get(targetId)
+      if (target) {
+        currentAdapterId.value = targetId
+        addEntry('system', targetId, { content: `已切换到 ${target.name}` })
+      } else {
+        const names = all().map(a => a.id).join(', ')
+        addEntry('system', 'system', { content: `未知适配器: ${targetId}。可用: ${names}` })
+      }
     }
     busy.value = false
+    return
   }
+
+  // type === 'command'
+  addEntry('system', parsed.adapter.id, { content: `/${parsed.command} ${parsed.args}` })
+  try {
+    const result = await parsed.adapter.execute(parsed.command, parsed.args)
+    addEntry(result.type, parsed.adapter.id, result as unknown as Record<string, unknown>)
+  } catch (e) {
+    addEntry('system', parsed.adapter.id, { content: `错误: ${e}` })
+  }
+  busy.value = false
 }
 </script>
 
@@ -100,16 +116,14 @@ async function handleSubmit(parsed: Parsed) {
     <div class="messages" ref="messagesEl">
       <div v-if="entries.length === 0" class="empty-state">
         <div class="empty-title">Anvil</div>
-        <div class="empty-sub">打字聊天，斜杠调工具。/help 查看全部命令。</div>
+        <div class="empty-sub">打字聊天，斜杠调工具。/switch <适配器> 切换聊天引擎。</div>
       </div>
 
       <div v-for="entry in entries" :key="entry.id" class="entry"
            :class="[entry.type === 'message' && entry.data.role === 'user' ? 'entry-right' : 'entry-left']">
 
-        <!-- system -->
         <div v-if="entry.type === 'system'" class="system-msg">{{ entry.data.content }}</div>
 
-        <!-- message -->
         <div v-else-if="entry.type === 'message'" class="bubble"
              :class="entry.data.role === 'user' ? 'bubble-user' : 'bubble-agent'">
           <div v-if="entry.data.reasoning && entry.data.role !== 'user'"
@@ -118,10 +132,8 @@ async function handleSubmit(parsed: Parsed) {
             展开思考</div>
           <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning">{{ entry.data.reasoning }}</div>
           <div class="content">{{ entry.data.content }}</div>
-          <div v-if="entry.data.role !== 'user' && entry.data.elapsed" class="meta">{{ entry.data.elapsed }}s</div>
         </div>
 
-        <!-- plan + inline approval -->
         <div v-else-if="entry.type === 'plan'" class="plan-card">
           <div v-if="entry.data.title" class="plan-title">{{ entry.data.title }}</div>
           <div v-if="entry.data.sessionId" class="plan-meta">session {{ String(entry.data.sessionId).slice(0, 14) }} · 分支 {{ entry.data.branch }}</div>
@@ -137,10 +149,8 @@ async function handleSubmit(parsed: Parsed) {
           <div v-else-if="entry.data.approved" class="plan-approved">已批准，执行中</div>
         </div>
 
-        <!-- train -->
         <div v-else-if="entry.type === 'train'" class="train-msg">{{ entry.data.content }}</div>
 
-        <!-- execution / log / diff / pr / mcp -->
         <div v-else class="exec-msg">{{ entry.data.content }}</div>
       </div>
     </div>
@@ -159,13 +169,12 @@ async function handleSubmit(parsed: Parsed) {
 .entry-left { margin-right: auto; }
 .entry-right { margin-left: auto; }
 .bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; }
-.bubble-user { background: var(--signal); color: #141210; }
+.bubble-user { background: var(--signal); color: var(--canvas); }
 .bubble-agent { background: var(--surface); border: 1px solid var(--line); color: var(--ink2); }
 .think-toggle { font-size: 12px; color: var(--ink4); cursor: pointer; user-select: none; border-bottom: 1px dashed var(--ink4); display: inline-block; margin-bottom: 4px; padding-bottom: 1px; }
 .reasoning { display: none; font-size: 12px; color: var(--ink3); background: var(--signalSoft); border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
 .reasoning.visible { display: block; }
 .content { white-space: pre-wrap; word-break: break-word; }
-.meta { font-size: 11px; color: var(--ink4); margin-top: 4px; display: inline-block; }
 .system-msg { text-align: center; font-size: 12px; color: var(--ink3); margin: 12px 0; font-family: var(--mono); }
 .exec-msg { font-family: var(--mono); font-size: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 8px 0; }
 .train-msg { font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
@@ -179,7 +188,7 @@ async function handleSubmit(parsed: Parsed) {
 .step-status.approved { background: var(--success); }
 .step-status.done { background: var(--success); }
 .step-status.running { background: var(--warning); }
-.approve-btn { padding: 6px 16px; background: var(--signal); color: #141210; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; margin-top: 12px; }
+.approve-btn { padding: 6px 16px; background: var(--signal); color: var(--canvas); border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; margin-top: 12px; }
 .approve-btn:hover { opacity: 0.9; }
 .plan-approved { font-size: 12px; color: var(--success); margin-top: 12px; }
 </style>

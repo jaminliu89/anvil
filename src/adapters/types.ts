@@ -1,4 +1,4 @@
-// Anvil 适配器体系 — 类型定义
+// Anvil adapter types — Parchment 4.0
 
 export type CapabilityType =
   | 'chat' | 'plan' | 'execute' | 'mcp'
@@ -23,7 +23,6 @@ export type ExecutionEntryType =
   | 'message' | 'system' | 'plan' | 'execution' | 'approval'
   | 'diff' | 'pr' | 'log' | 'mcp-result' | 'train'
 
-// 执行结果 — adapter.execute() 的返回值
 export interface ExecutionResult {
   type: ExecutionEntryType
   title?: string
@@ -35,7 +34,6 @@ export interface ExecutionResult {
   data?: Record<string, unknown>
 }
 
-// 适配器接口 — 每个工具/平台实现此接口
 export interface Adapter {
   id: string
   name: string
@@ -66,7 +64,6 @@ export interface ChatResult {
   usage?: { cacheHitRate?: number; totalTokens?: number; elapsedMs?: number }
 }
 
-// 时间线条目 — 统一会话流中的一条
 export interface TimelineEntry {
   id: string
   timestamp: number

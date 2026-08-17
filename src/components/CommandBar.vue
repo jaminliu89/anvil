@@ -4,15 +4,20 @@ import { parse, suggest } from '@/adapters/parse'
 import { listCommands } from '@/adapters/registry'
 import type { Parsed } from '@/adapters/parse'
 
-const emit = defineEmits<{
-  submit: [parsed: Parsed]
-}>()
+const emit = defineEmits<{ submit: [parsed: Parsed] }>()
 
 const input = ref('')
 const suggestions = ref<string[]>([])
 const showHelp = ref(false)
 
-const commands = computed(() => listCommands())
+const commands = computed(() => {
+  const adapterCmds = listCommands()
+  const builtins = [
+    { command: '/switch', description: '切换聊天适配器。用法: /switch <id>', adapterName: '—' },
+    { command: '/help', description: '显示全部命令', adapterName: '—' },
+  ]
+  return [...builtins, ...adapterCmds]
+})
 
 function onInput() {
   const val = input.value
@@ -28,7 +33,6 @@ function onInput() {
 function selectSuggestion(cmd: string) {
   input.value = cmd + ' '
   suggestions.value = []
-  // focus stays on textarea
 }
 
 function onSubmit() {
@@ -60,12 +64,7 @@ function onKeydown(e: KeyboardEvent) {
 <template>
   <div class="command-bar">
     <div v-if="suggestions.length" class="suggestions">
-      <div
-        v-for="s in suggestions"
-        :key="s"
-        class="suggestion"
-        @mousedown.prevent="selectSuggestion(s)"
-      >{{ s }}</div>
+      <div v-for="s in suggestions" :key="s" class="suggestion" @mousedown.prevent="selectSuggestion(s)">{{ s }}</div>
     </div>
 
     <div v-if="showHelp" class="help-panel">
@@ -75,7 +74,7 @@ function onKeydown(e: KeyboardEvent) {
         <span class="help-desc">{{ c.description }}</span>
         <span class="help-adapter">{{ c.adapterName }}</span>
       </div>
-      <div class="help-footer">直接输入文字开始聊天。无前缀文字自动路由到当前适配器。</div>
+      <div class="help-footer">直接输入文字开始聊天。/switch <适配器> 切换聊天引擎。可用适配器：输入 /switch 查看全部。</div>
     </div>
 
     <div class="input-row">
@@ -98,9 +97,7 @@ function onKeydown(e: KeyboardEvent) {
   background: var(--raised); border: 1px solid var(--line); border-bottom: none;
   border-radius: 9px 9px 0 0; max-height: 160px; overflow-y: auto;
 }
-.suggestion {
-  padding: 8px 16px; font-size: 13px; font-family: var(--mono); cursor: pointer; color: var(--ink);
-}
+.suggestion { padding: 8px 16px; font-size: 13px; font-family: var(--mono); cursor: pointer; color: var(--ink); }
 .suggestion:hover { background: var(--signalSoft); }
 .help-panel {
   position: absolute; bottom: 100%; left: 0; right: 0;
@@ -121,9 +118,9 @@ textarea {
 }
 textarea:focus { border-color: var(--signal); }
 .send-btn {
-  border: none; background: var(--signal); color: var(--raised);
+  border: none; background: var(--signal); color: var(--canvas);
   border-radius: 9px; padding: 10px 18px; font-size: 14px; font-weight: 500;
   cursor: pointer; align-self: flex-end;
 }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
-</style>`, "path": true}
+</style>
