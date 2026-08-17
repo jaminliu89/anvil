@@ -57,7 +57,7 @@
 ## G8 unsloth（bridge 网关）
 
 - [x] bridge 端：status/checkpoints/start/train/stop
-- [ ] 前端 /train UI + loss 曲线
+- [x] 前端 /train UI + loss 曲线（TrainView.vue 542 行 — 配置表单/检查点/实时状态/bridge 全接）
 - [ ] 模型导出 + 自动加载
 
 ## G9 体验闭环（当前焦点）
@@ -72,7 +72,7 @@
 - [x] 会话持久化 + 多会话切换（conv-store.ts + conv-select 下拉 + 新对话/删除）
 - [x] bridge 多模型代理（POST /target，/switch 同步切换推理端点）
 - [x] smoke-test.sh 全链路（7/7 PASS）
-- [ ] 适配器自动注册管线（bridge → plugins → frontend）
+- [x] 适配器自动注册数据源（bridge GET /capabilities — 前端拉取适配器清单）
 
 ## G10 清理
 
