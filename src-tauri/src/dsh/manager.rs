@@ -112,6 +112,22 @@ impl SidecarManager {
                 .join("sidecar/bridge.py");
             let script = if script_dev.exists() {
                 script_dev
+            } else if let Ok(exe) = std::env::current_exe() {
+                // Anvil.app/Contents/Resources/sidecar/bridge.py
+                let _ = exe;
+                let candidates = vec![
+                    std::path::PathBuf::from("sidecar/bridge.py"),
+                    std::path::PathBuf::from("_up_/sidecar/bridge.py"),
+                    std::path::PathBuf::from("Resources/sidecar/bridge.py"),
+                ];
+                let mut found = candidates[0].clone();
+                for c in &candidates {
+                    if c.exists() {
+                        found = c.clone();
+                        break;
+                    }
+                }
+                found
             } else {
                 std::path::PathBuf::from("sidecar/bridge.py")
             };

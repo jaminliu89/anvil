@@ -30,6 +30,7 @@
     }
   },
   "bundle": {
+    "resources": ["sidecar/bridge.py"],
     "active": true,
     "targets": "all",
     "icon": [
