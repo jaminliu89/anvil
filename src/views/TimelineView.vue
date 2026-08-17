@@ -8,10 +8,33 @@ import type { TimelineEntry } from '@/adapters/types'
 
 onMounted(() => { registerAllAdapters() })
 
+const BRIDGE = 'http://127.0.0.1:18443'
+
 const entries = ref<TimelineEntry[]>([])
 const currentAdapterId = ref('ling')
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
+const autoSearch = ref(false)
+
+async function searchWeb(query: string): Promise<string> {
+  try {
+    const res = await fetch(`${BRIDGE}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, count: 5 }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!res.ok) return ''
+    const json = await res.json()
+    const results = json.results || []
+    if (results.length === 0) return ''
+    return results.map((r: { title?: string; url?: string; content?: string }, i: number) =>
+      `[${i + 1}] ${r.title || ''}\n来源: ${r.url || ''}\n${(r.content || '').slice(0, 400)}`
+    ).join('\n\n')
+  } catch {
+    return ''
+  }
+}
 
 function scrollBottom() {
   nextTick(() => {
@@ -55,6 +78,16 @@ async function handleSubmit(parsed: Parsed) {
     if (!parsed.text) { busy.value = false; return }
     addEntry('message', currentAdapterId.value, { role: 'user', content: parsed.text })
 
+    // 联网搜索：自动注入上下文
+    let prompt = parsed.text
+    if (autoSearch.value) {
+      const context = await searchWeb(parsed.text)
+      if (context) {
+        addEntry('system', 'search', { content: context })
+        prompt = `${context}\n\n用户提问: ${parsed.text}`
+      }
+    }
+
     const adapter = get(currentAdapterId.value)
     if (adapter?.chat) {
       const history = entries.value
@@ -63,7 +96,7 @@ async function handleSubmit(parsed: Parsed) {
         .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
 
       try {
-        const result = await adapter.chat(history, parsed.text)
+        const result = await adapter.chat(history, prompt)
         addEntry('message', currentAdapterId.value, {
           role: 'assistant', content: result.content, reasoning: result.reasoning,
         })
@@ -120,6 +153,11 @@ async function handleSubmit(parsed: Parsed) {
 <template>
   <div class="timeline-view">
     <div class="messages" ref="messagesEl">
+      <div class="search-bar">
+        <button class="search-toggle" :class="{ active: autoSearch }" @click="autoSearch = !autoSearch">
+          联网搜索
+        </button>
+      </div>
       <div v-if="entries.length === 0" class="empty-state">
         <div class="empty-title">Anvil</div>
         <div class="empty-sub">打字聊天，斜杠调工具。/switch <适配器> 切换聊天引擎。</div>
@@ -167,7 +205,15 @@ async function handleSubmit(parsed: Parsed) {
 
 <style scoped>
 .timeline-view { display: flex; flex-direction: column; height: 100%; }
-.messages { flex: 1; overflow-y: auto; padding: 24px; }
+.messages { flex: 1; overflow-y: auto; padding: 24px; position: relative; }
+.search-bar { position: absolute; top: 12px; right: 24px; z-index: 10; }
+.search-toggle {
+  padding: 4px 12px; font-size: 11px; font-family: var(--mono);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--surface); color: var(--ink3);
+  transition: all var(--duration-micro);
+}
+.search-toggle.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
 .empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
 .empty-sub { font-size: 13px; color: var(--ink3); }

@@ -50,6 +50,35 @@ UNSLOTH_HEALTH = "http://127.0.0.1:8888/api/health"
 TRAIN_STATE: dict = {"running": False, "pid": None, "model": "", "started_at": 0, "log": [], "step": 0, "loss": 0.0}
 
 
+def _tavily_key() -> str:
+    key = os.environ.get("TAVILY_API_KEY", "")
+    if key:
+        return key
+    try:
+        with open(os.path.expanduser("~/.hermes/.env")) as f:
+            for line in f:
+                if line.startswith("TAVILY_API_KEY="):
+                    return line.strip().split("=", 1)[1]
+    except (FileNotFoundError, OSError):
+        pass
+    return ""
+
+def _tavily_search(query: str, count: int = 5) -> list[dict]:
+    key = _tavily_key()
+    if not key:
+        return [{"error": "TAVILY_API_KEY not set"}]
+    try:
+        req = Request(
+            "https://api.tavily.com/search",
+            data=json.dumps({"api_key": key, "query": query, "max_results": count, "include_answer": False}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=15) as r:
+            body = json.loads(r.read())
+        return body.get("results", [])
+    except Exception as e:
+        return [{"error": str(e)}]
+
 def make_harness(target: str, api_key: str) -> DeepSeekHarness:
     return DeepSeekHarness(api_key=api_key, base_url=target)
 
@@ -117,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._chat()
             elif self.path == "/stream":
                 self._stream()
+            elif self.path == "/search":
+                self._search()
             elif self.path == "/estimate":
                 self._estimate()
             elif self.path.startswith("/unsloth/start/"):
@@ -202,6 +233,16 @@ class Handler(BaseHTTPRequestHandler):
             emit("done", {"ok": True})
         except Exception as e:
             emit("error", {"error": str(e)})
+
+    # ---- 搜索 ----
+    def _search(self):
+        req = self._read_body()
+        query = req.get("query", "")
+        count = req.get("count", 5)
+        if not query:
+            self._json(400, {"error": "query required"})
+            return
+        self._json(200, {"query": query, "results": _tavily_search(query, count)})
 
     # ---- 体检 ----
     def _doctor(self):
