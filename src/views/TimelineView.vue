@@ -174,6 +174,17 @@ async function handleSubmit(parsed: Parsed) {
         persistAdapter(targetId)
         addEntry('system', targetId, { content: `已切换到 ${target.name}` })
         persistConv()
+        // 同步切 bridge 推理端点（ling/ollama/lmstudio）
+        try {
+          const r = await fetch(`${BRIDGE}/target`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: targetId }),
+            signal: AbortSignal.timeout(5000),
+          })
+          const j = await r.json()
+          if (j.ok) addEntry('system', 'system', { content: `推理端点 → ${j.switched} (${j.model || 'auto'})` })
+        } catch { /* bridge 不在或非推理适配器，静默 */ }
       } else {
         const names = all().map(a => a.id).join(', ')
         addEntry('system', 'system', { content: `未知适配器: ${targetId}。可用: ${names}` })

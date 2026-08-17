@@ -82,6 +82,14 @@ def make_harness(target: str, api_key: str) -> DeepSeekHarness:
     return DeepSeekHarness(api_key=api_key, base_url=target)
 
 
+# 多推理端点注册表 — /target 可运行时切换
+INFERENCE_TARGETS: dict = {
+    "ling": os.getenv("ANVIL_TARGET", "http://localhost:18080/v1"),
+    "ollama": "http://localhost:11434/v1",
+    "lmstudio": "http://localhost:1234/v1",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     harness: DeepSeekHarness | None = None  # injected
     salvage_log: list[dict] = []
@@ -118,6 +126,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
     def do_GET(self):
+        if self.path == "/models":
+            self._json(200, {"targets": INFERENCE_TARGETS, "current": getattr(Handler, "target", "")})
+            return
         if self.path == "/health":
             self._json(200, {"ok": True, "dsh": dsh_version, "ts": time.time()})
             return
@@ -147,6 +158,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream()
             elif self.path == "/search":
                 self._search()
+            elif self.path == "/target":
+                self._switch_target()
             elif self.path == "/estimate":
                 self._estimate()
             elif self.path.startswith("/unsloth/start/"):
@@ -232,6 +245,31 @@ class Handler(BaseHTTPRequestHandler):
             emit("done", {"ok": True})
         except Exception as e:
             emit("error", {"error": str(e)})
+
+    # ---- 切换推理端点 ----
+    def _switch_target(self):
+        req = self._read_body()
+        name = req.get("name", "")
+        if name not in INFERENCE_TARGETS:
+            self._json(400, {"error": f"unknown target {name}", "available": list(INFERENCE_TARGETS)})
+            return
+        url = INFERENCE_TARGETS[name]
+        try:
+            urlopen(f"{url}/models", timeout=3)
+            Handler.harness = make_harness(url, "not-needed")
+            Handler.model_id = ""
+            # 重新自动发现 model id
+            try:
+                with urlopen(f"{url}/models", timeout=5) as r:
+                    data = json.load(r)
+                models = [m.get("id") for m in data.get("data", []) if m.get("id")]
+                Handler.model_id = models[0] if models else ""
+            except Exception:
+                pass
+            Handler.current_target = name
+            self._json(200, {"ok": True, "switched": name, "url": url, "model": Handler.model_id})
+        except Exception as e:
+            self._json(503, {"error": f"target {name} not responding: {e}"})
 
     # ---- 搜索 ----
     def _search(self):
