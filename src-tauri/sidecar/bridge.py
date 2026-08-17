@@ -469,8 +469,32 @@ def main():
     ap.add_argument("--api-key", default=os.getenv("ANVIL_API_KEY", "not-needed"))
     ap.add_argument("--model", default=os.getenv("ANVIL_MODEL", ""))
     args = ap.parse_args()
+    target = args.target.rstrip("/")
 
-    h = make_harness(args.target, args.api_key)
+    def _probe_or_launch(t: str) -> bool:
+        """探活推理端点，未启动则尝试 ollama serve"""
+        try:
+            urlopen(f"{t}/models", timeout=3)
+            return True
+        except Exception:
+            pass
+        try:
+            subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(3)
+            try:
+                urlopen(f"{t}/models", timeout=5)
+                return True
+            except Exception:
+                pass
+        except FileNotFoundError:
+            pass
+        return False
+
+    if not _probe_or_launch(target):
+        print(f"[anvil-sidecar] WARNING: inference endpoint {target} not responding", file=sys.stderr)
+        print(f"[anvil-sidecar]   start it: ollama serve or ling_server.py --port 18080", file=sys.stderr)
+
+    h = make_harness(target, args.api_key)
     Handler.harness = h
     Handler.model_id = args.model
 
