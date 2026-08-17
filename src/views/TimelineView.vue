@@ -86,6 +86,12 @@ async function handleSubmit(parsed: Parsed) {
   if (parsed.type === 'builtin') {
     if (parsed.command === 'switch') {
       const targetId = parsed.args
+      if (!targetId) {
+        const names = all().map(a => a.id).join(', ')
+        addEntry('system', 'system', { content: `可用适配器: ${names}。输入 /switch <id> 切换。` })
+        busy.value = false
+        return
+      }
       const target = get(targetId)
       if (target) {
         currentAdapterId.value = targetId
