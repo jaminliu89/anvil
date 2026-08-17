@@ -6,16 +6,58 @@ import { get, all } from '@/adapters/registry'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
+import { listConvs, saveConv, loadConv, deleteConv, newConvId } from '@/utils/conv-store'
 
 onMounted(() => { registerAllAdapters() })
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
 const entries = ref<TimelineEntry[]>([])
-const currentAdapterId = ref('ling')
+const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || 'ling')
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
-const autoSearch = ref(false)
+const autoSearch = ref(localStorage.getItem('anvil.search') === '1')
+
+function persistAdapter(id: string) {
+  currentAdapterId.value = id
+  localStorage.setItem('anvil.adapter', id)
+}
+
+const convId = ref(localStorage.getItem('anvil.conv.current') || newConvId())
+const convList = ref(listConvs())
+
+function startNewConv() {
+  convId.value = newConvId()
+  entries.value = []
+  localStorage.setItem('anvil.conv.current', convId.value)
+}
+
+function switchConv(id: string) {
+  const loaded = loadConv(id)
+  if (loaded) {
+    convId.value = id
+    entries.value = loaded
+    localStorage.setItem('anvil.conv.current', id)
+  }
+}
+
+function removeConv(id: string) {
+  deleteConv(id)
+  convList.value = listConvs()
+  if (convId.value === id) startNewConv()
+}
+
+function persistConv() {
+  const firstUser = entries.value.find(e => e.type === 'message' && e.data.role === 'user')
+  const title = firstUser ? String(firstUser.data.content).slice(0, 30) : '新对话'
+  saveConv(convId.value, title, entries.value)
+  convList.value = listConvs()
+}
+
+function toggleSearch() {
+  autoSearch.value = !autoSearch.value
+  localStorage.setItem('anvil.search', autoSearch.value ? '1' : '0')
+}
 
 async function searchWeb(query: string): Promise<string> {
   try {
@@ -78,6 +120,7 @@ async function handleSubmit(parsed: Parsed) {
   if (parsed.type === 'chat') {
     if (!parsed.text) { busy.value = false; return }
     addEntry('message', currentAdapterId.value, { role: 'user', content: parsed.text })
+    persistConv()
 
     let prompt = parsed.text
     if (autoSearch.value) {
@@ -100,6 +143,7 @@ async function handleSubmit(parsed: Parsed) {
         addEntry('message', currentAdapterId.value, {
           role: 'assistant', content: result.content, reasoning: result.reasoning,
         })
+        persistConv()
       } catch (e) {
         addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
       }
@@ -127,8 +171,9 @@ async function handleSubmit(parsed: Parsed) {
       }
       const target = get(targetId)
       if (target) {
-        currentAdapterId.value = targetId
+        persistAdapter(targetId)
         addEntry('system', targetId, { content: `已切换到 ${target.name}` })
+        persistConv()
       } else {
         const names = all().map(a => a.id).join(', ')
         addEntry('system', 'system', { content: `未知适配器: ${targetId}。可用: ${names}` })
@@ -143,6 +188,7 @@ async function handleSubmit(parsed: Parsed) {
   try {
     const result = await parsed.adapter.execute(parsed.command, parsed.args)
     addEntry(result.type, parsed.adapter.id, result as unknown as Record<string, unknown>)
+    persistConv()
   } catch (e) {
     addEntry('system', parsed.adapter.id, { content: `错误: ${e}` })
   }
@@ -205,7 +251,15 @@ async function handleSubmit(parsed: Parsed) {
     </div>
 
     <div class="search-toggle">
-      <button class="search-btn" :class="{ active: autoSearch }" @click="autoSearch = !autoSearch">
+      <button class="search-btn" @click="startNewConv">+ 新对话</button>
+      <select class="conv-select" @change="switchConv(($event.target as HTMLSelectElement).value)">
+        <option value="" disabled selected>历史对话 ({{ convList.length }})</option>
+        <option v-for="c in convList" :key="c.id" :value="c.id">
+          {{ c.title }} · {{ new Date(c.updatedAt).toLocaleDateString() }}
+        </option>
+      </select>
+      <button v-if="convList.length" class="search-btn" @click="removeConv(convId)">删除当前</button>
+      <button class="search-btn" :class="{ active: autoSearch }" @click="toggleSearch()">
         联网搜索
       </button>
       <span class="search-hint">{{ autoSearch ? '每次聊天自动搜索网络' : '关闭' }}</span>
@@ -259,6 +313,11 @@ async function handleSubmit(parsed: Parsed) {
 }
 .search-btn.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
 .search-hint { font-size: 11px; color: var(--ink4); }
+.conv-select {
+  font-size: 11px; font-family: var(--mono); color: var(--ink3);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 4px 8px; max-width: 220px; cursor: pointer;
+}
 
 /* 助手消息 markdown 排版 */
 .content :deep(h1), .content :deep(h2), .content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
