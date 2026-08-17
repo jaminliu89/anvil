@@ -126,6 +126,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
     def do_GET(self):
+        if self.path == "/capabilities":
+            caps = {
+                "adapters": [
+                    {"id": "ling", "name": "Ling (本地推理)", "commands": [], "chat": True},
+                    {"id": "dock", "name": "Dock (异步编码)", "commands": ["dock"], "chat": False},
+                    {"id": "unsloth", "name": "Unsloth (训练)", "commands": ["train"], "chat": False},
+                ],
+                "targets": list(INFERENCE_TARGETS.keys()),
+                "endpoints": ["/chat", "/stream", "/search", "/target", "/models", "/health", "/doctor", "/estimate", "/unsloth/*"],
+                "version": "0.2.1",
+            }
+            self._json(200, caps)
+            return
         if self.path == "/models":
             self._json(200, {"targets": INFERENCE_TARGETS, "current": getattr(Handler, "target", "")})
             return
