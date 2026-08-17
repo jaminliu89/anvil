@@ -12,6 +12,7 @@ const settingsStore = useSettingsStore()
 interface NavItem { id: string; label: string; icon: string; advanced?: boolean }
 
 const allNav: NavItem[] = [
+  { id: 'timeline', label: '时间线', icon: 'timeline' },
   { id: 'chat', label: '对话', icon: 'chat' },
   { id: 'runtime', label: '运行', icon: 'play' },
   { id: 'train', label: '训练', icon: 'book', advanced: true },
@@ -23,16 +24,16 @@ const allNav: NavItem[] = [
 const advanced = computed(() => settingsStore.advancedMode)
 const navItems = computed(() => allNav.filter((n) => !n.advanced || advanced.value))
 
-const activeTab = ref('chat')
+const activeTab = ref('timeline')
 
 function syncTab() {
-  const path = route.path.split('/')[1] || 'chat'
+  const path = route.path.split('/')[1] || 'timeline'
   activeTab.value = path
 }
 
 function navigate(id: string) {
   activeTab.value = id
-  router.push(id === 'chat' ? '/' : `/${id}`)
+  router.push(id === 'timeline' ? '/' : `/${id}`)
 }
 
 function statusLabel() {
@@ -75,6 +76,9 @@ onMounted(async () => {
             :class="{ active: activeTab === item.id }"
             @click="navigate(item.id)"
           >
+            <svg v-if="item.icon === 'timeline'" class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
             <svg v-if="item.icon === 'chat'" class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>

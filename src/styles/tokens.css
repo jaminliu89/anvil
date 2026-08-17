@@ -94,4 +94,24 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.3);
   --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  /* ---- Parchment 别名（v2 组件使用） ---- */
+  --canvas: var(--color-bg);
+  --surface: var(--color-bg-secondary);
+  --raised: var(--color-bg-elevated);
+  --line: var(--color-border-soft);
+  --ink: var(--color-text);
+  --ink2: var(--color-text-secondary);
+  --ink3: var(--color-text-tertiary);
+  --ink4: var(--color-text-muted);
+  --signal: var(--color-signal);
+  --signalSoft: var(--color-signal-soft);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --error: var(--color-error);
+  --radius: var(--radius-md);
+  --radius-sm: var(--radius-sm);
+  --radius-lg: var(--radius-xl);
+  --font: inherit;
+  --mono: 'DM Mono', ui-monospace, monospace;
 }
