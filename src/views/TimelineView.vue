@@ -83,8 +83,8 @@ async function handleSubmit(parsed: Parsed) {
     if (autoSearch.value) {
       const context = await searchWeb(parsed.text)
       if (context) {
-        addEntry('system', 'search', { content: context })
-        prompt = `${context}\n\n用户提问: ${parsed.text}`
+        addEntry('system', 'system', { content: '🔍 已搜索网络，正在整合结果...' })
+        prompt = `以下是联网搜索结果（供你参考，输出时用自然语言组织，必要时在句末标注来源）：\n${context}\n\n用户提问: ${parsed.text}`
       }
     }
 
@@ -220,10 +220,10 @@ async function handleSubmit(parsed: Parsed) {
 .empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
 .empty-sub { font-size: 13px; color: var(--ink3); }
-.entry { margin-bottom: 16px; max-width: 78%; }
+.entry { margin-bottom: 16px; max-width: 78%; width: fit-content; min-width: 160px; }
 .entry-left { margin-right: auto; }
 .entry-right { margin-left: auto; }
-.bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; }
+.bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; width: fit-content; }
 .bubble-user { background: var(--signal); color: var(--canvas); }
 .dark .bubble-user, [data-theme="dark"] .bubble-user { background: #D4D4D4; color: #141415; }
 .bubble-agent { background: var(--surface); border: 1px solid var(--line); color: var(--ink2); }
