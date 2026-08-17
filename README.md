@@ -1,143 +1,68 @@
 # Anvil
 
-本地 AI 工作台。一个 app 管本地推理、训练、Agent 编排。
+**本地 AI 控制中心。一个桌面 App 管你机器上的所有 AI 能力。**
 
-## 一句话
+Anvil 不是又一个 AI 聊天工具。它是编排层——把推理、编码 agent、训练、agent 框架全部纳入一个桌面窗口，每种工具保留自己的独特能力。
 
-Anvil 把三个东西集成到一个桌面里：llama.cpp 推理（Ling-3.0-tiny 等本地模型）、Unsloth 微调训练、编码 Agent 协同。再加一个守卫侧车（DSH bridge）做健康检查和故障恢复。
+## 它能做什么
 
-不需要配置多个端口、记住哪些服务分别在哪启动、手动检查谁挂了。Anvil 一个窗口解决。
+你机器上跑着多个 AI 工具：本地模型、云 API、编码 agent、训练平台。每个有自己的入口、自己的终端窗口、自己的交互方式。
 
-## 安装
+Anvil 给它们一个统一的桌面界面：
 
-### 依赖
+- **聊天** — 跟本地模型对话（Ling-3.0-tiny / DeepSeek API / Unsloth）
+- **编码** — 调 pi / codex / Reasonix 改代码，结果直接返回聊天
+- **异步派发** — 派任务给 dock，后台改完通知你
+- **训练** — 连 Unsloth Desktop 做 LoRA 微调
+- **Agent 框架** — 集成 DeepSeek Harness 的插件生态
 
-| 组件 | 来源 | 说明 |
-|---|---|---|
-| Ling-3.0-tiny | `ghcr.io/jaminliu89/ling-3.0-tiny-mac` | 编码 Agent 主力模型 |
-| Unsloth Desktop 2 | unsloth.ai | 训练后端 |
+所有交互发生在同一条时间线上，不分页、不切窗口。
 
-### macOS
+## 快速开始
 
 ```bash
-# 克隆
 git clone https://github.com/jaminliu89/anvil.git
 cd anvil
-
-# 前端
 npm install
-
-# 桌面构建
 cd src-tauri && cargo build --release
 ```
 
-开箱即用，前提是 Ling-3.0-tiny（:18080）和 Unsloth Desktop（:8888）已在运行。
+前提：Ling-3.0-tiny (128080) 和 / 或 Unsloth Desktop (18888) 已在运行。
 
-### 从源码运行
+## 为什么不是...
 
-```bash
-# 1. 启动守卫侧车
-python3 src-tauri/sidecar/bridge.py --port 18443
-
-# 2. 启动前端开发服务器
-npm run dev
-
-# 3. 打开 http://localhost:5173
-```
+- **...Jules 网页版？** Jules 把你的代码上传到 Google Cloud VM。Anvil 全部本地。
+- **...Open WebUI？** Open WebUI 是 Ollama 的聊天界面。Anvil 管的不只是聊天——它还管编码 agent、训练、异步派发。
+- **...DeepSeek Harness 的 Web UI？** dsh 是一个 agent 框架，有自己的 Web UI。Anvil 是桌面端编排层，把 dsh 和其他工具整合到一个窗口里。
+- **...在终端里直接调 pi / codex？** 你可以继续在终端里调。Anvil 不取代它们——它给你一个统一的图形界面来监控和编排。
 
 ## 架构
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│  ChatView   │────▶│  DSH Bridge  │────▶│  llama-server   │
-│  RuntimeView│     │  (:18443)    │     │  (:18080)       │
-│  GuardView  │     │  规则引擎    │     │                  │
-│  TrainView  │     │  + 健康检查  │     │  ┌────────────┐ │
-│  ConnectView│     │  + 故障恢复  │     │  │Ling-3.0-tiny│ │
-└─────────────┘     └──────────────┘     │  └────────────┘ │
-                           │             └─────────────────┘
-                           ▼
-                    ┌──────────────┐
-                    │  Unsloth     │
-                    │  Desktop     │
-                    │  (:8888)     │
-                    │  训练 + 推理 │
-                    └──────────────┘
+Anvil (Tauri 2 + Vue 3)
+├── Timeline — 统一会话流（聊天 + 计划 + 执行日志 + diff）
+├── Command Bar — /dock /reasonix /pi /codex /train
+├── Adapter Registry — 每个工具一个适配器
+└── DSH Bridge — 推理底座 + 守卫 + 健康检查
+
+后端：DSH Bridge (Python sidecar, :18443)
+引擎：Ling-3.0-tiny / DeepSeek API / Unsloth / dock / pi / codex / Reasonix
 ```
 
-### 核心原则
+## 适配器
 
-AI 内容工具领域沉淀的架构原则——**前端规则引擎是主引擎，LLM 是可选项**。所有核心功能（健康检查、故障恢复、大脑切换）走 DSH 守卫的规则引擎，推理只在用户发起对话时调用 LLM。
+Anvil 通过适配器连接每种工具。适配器不是薄封装——它把工具的独特能力翻译成 Timeline 里的交互：
 
-## 功能
-
-### ChatView — 对话
-
-流式对话，支持：
-- 思考过程折叠展示（LLM 的 reasoning_content）
-- 发送前 token 预估
-- 普通/高级模式切换（普通 = 简短回复，高级 = 深度推理）
-- 模型自动切换（Ling-tiny / Unsloth / 云端 API）
-
-### RuntimeView — 运行时
-
-- 实时显示各大脑状态（健康/停机/无响应）
-- 一键切换推理端点（:18080 ↔ :8888）
-- 三项体检：进程存活、API 响应、模型就绪
-
-### GuardView — 守卫面板
-
-- 全局健康监控
-- 抢救日志：自动记录故障和恢复操作
-- 规则引擎状态展示
-
-### TrainView — 训练
-
-- 检测 Unsloth Desktop 状态（在线/离线、模型加载情况）
-- 查看已保存的检查点列表
-- 打开 Unsloth Desktop 管理训练任务
-
-### ConnectView — Agent 桥梁
-
-- 一键启动编码 Agent 并连接到本地模型
-- 支持 Claude Code / Codex / Hermes / Pi / OpenCode / OpenClaw
-- 检查 Agent 安装状态和运行情况
-
-## 开发
-
-### 项目结构
-
-```
-src/                    # Vue 3 前端
-  views/                # 页面组件
-    ChatView.vue        # 对话页
-    RuntimeView.vue     # 运行时页
-    GuardView.vue       # 守卫面板页
-    TrainView.vue       # 训练页
-    ConnectView.vue     # Agent 桥梁页
-  services/
-    dsh.ts              # DSH 守卫 API 客户端
-  router/
-    index.ts            # 路由配置
-src-tauri/
-  src/
-    dsh/
-      manager.rs        # 侧车进程管理器
-      guard.rs          # 规则引擎 + 健康检查
-    lib.rs              # Tauri 入口
-  sidecar/
-    bridge.py           # DSH 守卫 HTTP 服务
-```
-
-### 构建打包
-
-```bash
-# 前端构建
-npm run build
-
-# 桌面应用打包
-cd src-tauri && cargo tauri build
-```
+| 适配器 | 命令 | 独特能力 |
+|--------|------|---------|
+| Ling-3.0-tiny | 默认聊天 | 本地离线推理 + reasoning 折叠 |
+| DeepSeek API | 默认聊天（可选） | 云端推理 + 缓存 |
+| dock | /dock | 异步编码 session + worktree 隔离 + 审批 |
+| Reasonix | /reasonix | 前缀缓存 + 子智能体 + MCP + 计划模式 |
+| pi | /pi | 非交互编码执行 |
+| codex | /codex | 沙箱执行 + 配额管理 |
+| DeepSeek Harness | /dsh | agent loop + 插件生态 |
+| Unsloth | /train | LoRA 微调 + 模型导出 |
 
 ## 协议
 

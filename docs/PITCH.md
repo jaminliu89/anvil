@@ -1,60 +1,67 @@
-# Anvil — 本地 AI 工作台
+# Anvil — 本地 AI 控制中心
 
-把碎片化的本地 AI 工具链，
-集成到一个桌面里。
+**你的机器上有多少个 AI 工具？每个都有不同的入口、不同的窗口、不同的操作方式。**
+
+Anvil 把它们放进一个桌面 App。
 
 ---
 
-## 痛点
+## 管什么
 
-本地 AI 圈现状——
+| 能力 | 工具 |
+|------|------|
+| 本地推理 | Ling-3.0-tiny / 任何 llama.cpp 模型 |
+| 云端推理 | DeepSeek API / 任意 OpenAI 兼容 API |
+| 编码 Agent | Pi / Codex / Reasonix |
+| 异步编码调度 | dock（worktree 隔离 + 计划审批） |
+| Agent 框架 | DeepSeek Harness（插件生态） |
+| 训练 | Unsloth Desktop（LoRA 微调） |
 
-你装了一个模型，一个训练工具，一个 Agent 框架。
-三个不同的端口，三个不同的启动方式，三套不同的配置。
-每次切换大脑要在终端里敲一串命令。
-训练和推理是两套独立的流程，互相不知道对方存在。
+## 怎么管
 
-碎片化。
+一个命令栏，一个时间线。
 
-## 方案
+```text
+普通打字 → 跟本地模型聊天
+/dock 修复 login 500 → 派异步编码任务
+/reasonix plan 重构 → 生成计划，你批了再执行
+/dsh run 复杂重构 → 路由给 DeepSeek Harness
+/train lora → 启动微调
+/ps → 看所有活跃任务
+```
 
-Anvil 把这三件事集成到一个桌面应用里：
+所有交互——聊天、计划、执行日志、diff、PR——出现在同一条时间线上。不分页、不切窗口。
 
-**推理** — 对接 llama.cpp 集群，ChatView 流式对话带思考折叠
-**训练** — Unsloth Desktop 集成，检查点管理一键打开
-**Agent** — Claude Code / Codex / Hermes 等编码 Agent 一键启动
+## 不是又一个壳
 
-再加一个 DSH 守卫侧车——自动做健康检查、故障恢复、大脑切换。LLM 挂了它接管决策，不用人盯着。
+Anvil 不把能力「抹平」。每种工具在 Timeline 里用自己的方式渲染：
 
-## 为什么是 Anvil
-
-名字来自锻造——本地模型是粗坯，训练是锻造，Agent 是锤击。
-
-Anvil 不是又一个模型管理器。它是一个工作台——你把模型、训练、Agent 放上去，它负责让它们协同工作。
+- 聊天消息是气泡
+- 计划是步骤卡片 + 审批按钮（inline）
+- 执行是实时日志 + 进度
+- 改代码是 diff 对比
+- PR 是链接
 
 ## 谁需要它
 
-- 做 AI 内容工具开发的（自媒体、视频生成、写作工具）
-- 在本地跑模型做 R&D 的（不想依赖云端 API）
-- 用编码 Agent 每天写代码的（本地推理零成本）
-- 做模型微调的（Unsloth 用户）
+- 每天用编码 Agent 写代码的开发者
+- 在本地跑模型做产品原型的创作者
+- 同时用多个 AI 工具，不想记端口和命令的人
+- 想要本地隐私、不把代码上传到任何云端的人
 
 ## 当前状态
 
-v0.3 开发中。功能路线：
+Developer Preview。Tauri 2 + Vue 3，MIT 开源。
 
-- ChatView → v0.1 可用
-- RuntimeView + GuardView → v0.2 可用
-- TrainView + ConnectView → v0.3 开发中
-- 训练任务编排 + 完整打包 → v0.4
+```bash
+git clone https://github.com/jaminliu89/anvil.git
+cd anvil
+npm install
+cd src-tauri && cargo build --release
+```
 
-## 不做什么
-
-- 不做模型商店（去 Unsloth / Hugging Face 下载）
-- 不做云端推理（Anvil 是本地工具）
-- 不做 LLM 评测（那是别人的事）
-- 不做花哨 UI（Parchment 暖石系，功能区分靠颜色不是装饰）
+需要 Ling-3.0-tiny（:18080）和/或 Unsloth Desktop（:8888）运行。
 
 ---
 
-GitHub: github.com/jaminliu89/anvil
+GitHub: [github.com/jaminliu89/anvil](https://github.com/jaminliu89/anvil)
