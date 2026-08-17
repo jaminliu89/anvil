@@ -24,7 +24,7 @@
 - [x] bridge 封装（chat + stream + 超时提示）
 - [x] Timeline 渲染 + reasoning 折叠 + markdown
 - [x] Timeline 默认视图
-- [ ] 多模型切换（bridge 多目标路由）
+- [x] 多模型切换（bridge 多目标路由 — POST /target + INFERENCE_TARGETS 注册表）
 
 ## G4 dock-adapter（已交付核心）
 
@@ -68,9 +68,10 @@
   - [ ] 搜索结果胶囊色块
   - [ ] 空状态示例 prompt
   - [ ] 搜索按钮图标化+动效
-- [ ] 适配器 localStorage 持久化
-- [ ] bridge 多模型代理（/switch 时 bridge 换 target）
-- [ ] smoke-test.sh 全链路
+- [x] 适配器 localStorage 持久化（anvil.adapter / anvil.search）
+- [x] 会话持久化 + 多会话切换（conv-store.ts + conv-select 下拉 + 新对话/删除）
+- [x] bridge 多模型代理（POST /target，/switch 同步切换推理端点）
+- [x] smoke-test.sh 全链路（7/7 PASS）
 - [ ] 适配器自动注册管线（bridge → plugins → frontend）
 
 ## G10 清理
