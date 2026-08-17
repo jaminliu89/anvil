@@ -78,7 +78,6 @@ async function handleSubmit(parsed: Parsed) {
     if (!parsed.text) { busy.value = false; return }
     addEntry('message', currentAdapterId.value, { role: 'user', content: parsed.text })
 
-    // 联网搜索：自动注入上下文
     let prompt = parsed.text
     if (autoSearch.value) {
       const context = await searchWeb(parsed.text)
@@ -153,11 +152,6 @@ async function handleSubmit(parsed: Parsed) {
 <template>
   <div class="timeline-view">
     <div class="messages" ref="messagesEl">
-      <div class="search-bar">
-        <button class="search-toggle" :class="{ active: autoSearch }" @click="autoSearch = !autoSearch">
-          联网搜索
-        </button>
-      </div>
       <div v-if="entries.length === 0" class="empty-state">
         <div class="empty-title">Anvil</div>
         <div class="empty-sub">打字聊天，斜杠调工具。/switch <适配器> 切换聊天引擎。</div>
@@ -199,21 +193,19 @@ async function handleSubmit(parsed: Parsed) {
       </div>
     </div>
 
+    <div class="search-toggle">
+      <button class="search-btn" :class="{ active: autoSearch }" @click="autoSearch = !autoSearch">
+        联网搜索
+      </button>
+      <span class="search-hint">{{ autoSearch ? '每次聊天自动搜索网络' : '关闭' }}</span>
+    </div>
     <CommandBar @submit="handleSubmit" />
   </div>
 </template>
 
 <style scoped>
 .timeline-view { display: flex; flex-direction: column; height: 100%; }
-.messages { flex: 1; overflow-y: auto; padding: 24px; position: relative; }
-.search-bar { position: absolute; top: 12px; right: 24px; z-index: 10; }
-.search-toggle {
-  padding: 4px 12px; font-size: 11px; font-family: var(--mono);
-  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--surface); color: var(--ink3);
-  transition: all var(--duration-micro);
-}
-.search-toggle.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
+.messages { flex: 1; overflow-y: auto; padding: 24px; }
 .empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
 .empty-sub { font-size: 13px; color: var(--ink3); }
@@ -245,4 +237,15 @@ async function handleSubmit(parsed: Parsed) {
 .approve-btn:hover { opacity: 0.9; }
 .dark .approve-btn, [data-theme="dark"] .approve-btn { background: #D4D4D4; color: #141415; }
 .plan-approved { font-size: 12px; color: var(--success); margin-top: 12px; }
+
+/* 搜索开关条 — 放在 CommandBar 上方 */
+.search-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 24px; border-bottom: 1px solid var(--line); }
+.search-btn {
+  padding: 4px 14px; font-size: 11px; font-family: var(--mono);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--surface); color: var(--ink3);
+  transition: all var(--duration-micro);
+}
+.search-btn.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
+.search-hint { font-size: 11px; color: var(--ink4); }
 </style>
