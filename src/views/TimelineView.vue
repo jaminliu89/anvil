@@ -16,7 +16,7 @@ const entries = ref<TimelineEntry[]>([])
 const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || 'ling')
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
-const autoSearch = ref(localStorage.getItem('anvil.search') === '1')
+const autoSearch = ref(localStorage.getItem('anvil.search') !== '0')  // 默认开
 
 function persistAdapter(id: string) {
   currentAdapterId.value = id
@@ -214,7 +214,7 @@ async function handleSubmit(parsed: Parsed) {
         <div class="empty-title">Anvil</div>
         <div class="empty-sub">打字聊天，斜杠调工具。/switch [id] 切换聊天引擎。</div>
         <div class="empty-hints">
-          <div class="hint-text">/dock 帮我重构这个工具函数 → 起一个异步编码 session</div>
+          <div class="hint-text">帮我重构这个工具函数 → 起一个异步编码任务</div>
           <div class="hint-text">/switch ling → 切换聊天引擎到 Ling</div>
           <div class="hint-text">🌐 点联网搜索 → 每次提问自动搜索网络</div>
         </div>
@@ -273,7 +273,7 @@ async function handleSubmit(parsed: Parsed) {
       <button class="search-btn" :class="{ active: autoSearch }" @click="toggleSearch()">
         联网搜索
       </button>
-      <span class="search-hint">{{ autoSearch ? '每次聊天自动搜索网络' : '关闭' }}</span>
+      <span class="search-hint">{{ autoSearch ? '已开启' : '已关闭' }}</span>
     </div>
     <CommandBar @submit="handleSubmit" />
   </div>

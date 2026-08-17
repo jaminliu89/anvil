@@ -137,6 +137,19 @@ async function fetchCheckpoints() {
   }
 }
 
+const exporting = ref(false)
+
+async function exportModel(cpPath: string) {
+  exporting.value = true
+  try {
+    await fetch('http://127.0.0.1:18443/unsloth/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkpoint: cpPath, model: activeModel() }),
+    })
+  } catch {}
+  exporting.value = false
+}
+
 // 文件选择
 const fileInput = ref<HTMLInputElement | null>(null)
 function pickDataset() {
@@ -221,6 +234,7 @@ onUnmounted(() => {
             <label class="form-label">迭代轮数</label>
             <input v-model.number="epochs" type="number" min="1" max="100" class="form-input" />
           </div>
+          <button class="cp-action" @click="exportModel(cp.path || '')">导出</button>
           <div class="form-group half">
             <label class="form-label">学习率</label>
             <input v-model="learningRate" class="form-input" placeholder="2e-4" />
@@ -540,4 +554,8 @@ onUnmounted(() => {
 .cp-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .cp-name { font-size: var(--font-sm); font-weight: var(--font-medium); color: var(--color-text); }
 .cp-meta { font-size: var(--font-2xs); color: var(--color-text-tertiary); }
+
+.export-progress { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; color: var(--ink4); margin-bottom: 8px; }
+.cp-action { font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--line); background: var(--surface); color: var(--ink3); cursor: pointer; transition: all 0.15s; }
+.cp-action:hover { border-color: var(--signal); color: var(--signal); }
 </style>

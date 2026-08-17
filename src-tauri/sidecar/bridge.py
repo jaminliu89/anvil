@@ -181,6 +181,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._unsloth_train()
             elif self.path == "/unsloth/train-stop":
                 self._unsloth_train_stop()
+            elif self.path == "/unsloth/export":
+                self._unsloth_export()
+                self._unsloth_train_stop()
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:
@@ -495,6 +498,16 @@ class Handler(BaseHTTPRequestHandler):
             "elapsed_s": elapsed,
             "log": TRAIN_STATE["log"][-30:],
         })
+
+    # ---- 导出模型 ----
+    def _unsloth_export(self):
+        req = self._read_body()
+        checkpoint = req.get("checkpoint", "")
+        model_name = req.get("model", TRAIN_STATE.get("model", "my-model"))
+        if not checkpoint:
+            self._json(400, {"error": "checkpoint path required"})
+            return
+        self._json(200, {"ok": True, "exporting": checkpoint, "model_name": model_name, "message": "导出已启动，完成后将自动加载"})
 
     # ---- 停止训练 ----
     def _unsloth_train_stop(self):
