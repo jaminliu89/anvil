@@ -234,7 +234,6 @@ onUnmounted(() => {
             <label class="form-label">迭代轮数</label>
             <input v-model.number="epochs" type="number" min="1" max="100" class="form-input" />
           </div>
-          <button class="cp-action" @click="exportModel(cp.path || '')">导出</button>
           <div class="form-group half">
             <label class="form-label">学习率</label>
             <input v-model="learningRate" class="form-input" placeholder="2e-4" />
@@ -314,7 +313,9 @@ onUnmounted(() => {
             <span class="cp-meta">{{ cp.path ?? '' }}</span>
           </div>
         </div>
+        <button class="cp-action" @click="exportModel(cp.path || '')">导出并加载</button>
       </div>
+      <div v-if="exporting" class="export-progress">导出中，完成后自动加载…</div>
     </div>
   </div>
 </template>
@@ -558,4 +559,7 @@ onUnmounted(() => {
 .export-progress { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; color: var(--ink4); margin-bottom: 8px; }
 .cp-action { font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--line); background: var(--surface); color: var(--ink3); cursor: pointer; transition: all 0.15s; }
 .cp-action:hover { border-color: var(--signal); color: var(--signal); }
+.cp-action { font-size: 12px; padding: 5px 12px; border: 1px solid var(--color-border, #E5E5E5); border-radius: 6px; background: var(--color-bg, #FFF); color: var(--color-text-secondary, #666); cursor: pointer; transition: all 0.15s; }
+.cp-action:hover { border-color: #111; color: #111; }
+.export-progress { padding: 8px 14px; font-size: 13px; color: #666; background: #FCFCFC; border: 1px solid #E5E5E5; border-radius: 8px; margin-top: 8px; }
 </style>

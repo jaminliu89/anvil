@@ -92,6 +92,13 @@ INFERENCE_TARGETS: dict = {
     "lmstudio": "http://localhost:1234/v1",
 }
 
+# 云端默认 model
+_TARGET_MODELS = {
+    "deepseek": "deepseek-chat",
+    "siliconflow": "deepseek-ai/DeepSeek-V3",
+    "openai": "gpt-4o-mini",
+}
+
 # API key map for cloud targets
 _TARGET_KEYS = {
     "deepseek": os.getenv("DEEPSEEK_API_KEY", ""),
@@ -137,7 +144,28 @@ class Handler(BaseHTTPRequestHandler):
     # ---- GET ----
     def do_GET(self):
         if self.path == "/capabilities":
+            # 探活各推理端点
+            def _probe(url):
+                if not url:
+                    return False
+                try:
+                    urlopen(f"{url}/models", timeout=2)
+                    return True
+                except Exception:
+                    return False
+            target_status = {}
+            for n, u in INFERENCE_TARGETS.items():
+                if not u:
+                    continue
+                if n in _TARGET_KEYS:
+                    target_status[n] = _probe(u) or bool(_TARGET_KEYS[n])
+                else:
+                    target_status[n] = _probe(u)
+            # 云端 key 是否配置
+            key_status = {n: bool(k) for n, k in _TARGET_KEYS.items()}
             caps = {
+                "target_status": target_status,
+                "key_status": key_status,
                 "adapters": [
                     {"id": "ling", "name": "Ling (本地推理)", "commands": [], "chat": True},
                     {"id": "dock", "name": "Dock (异步编码)", "commands": ["dock"], "chat": False},
@@ -212,13 +240,41 @@ class Handler(BaseHTTPRequestHandler):
             if k in req:
                 kwargs[k] = req[k]
 
+        # fallback 链：主目标失败 → 依次尝试 deepseek/siliconflow
         t0 = time.time()
-        result = self.harness.chat(
-            model=req.get("model") or Handler.model_id,
-            messages=messages,
-            **kwargs,
-        )
+        result = None
+        last_err = ""
+        primary = req.get("model") or Handler.model_id
+        attempts = [("", None)]  # 先用当前 harness
+        fallback_names = [n for n in ("deepseek", "siliconflow") if _TARGET_KEYS.get(n)]
+        for fname in fallback_names:
+            attempts.append((fname, INFERENCE_TARGETS[fname]))
+
+        for fname, furl in attempts:
+            try:
+                if furl:  # 切到 fallback 端点
+                    Handler.harness = make_harness(furl, _TARGET_KEYS[fname])
+                    Handler.model_id = _TARGET_MODELS.get(fname, "")
+                    Handler.current_target = fname
+                use_model = Handler.model_id if furl else (req.get("model") or Handler.model_id)
+                result = self.harness.chat(
+                    model=use_model,
+                    messages=messages,
+                    **kwargs,
+                )
+                if result:
+                    break
+            except Exception as e:
+                last_err = str(e)
+                continue
+
         elapsed = round(time.time() - t0, 2)
+
+        if not result:
+            self._json(502, {"error": f"所有推理端点不可用: {last_err}"})
+            return
+        if last_err and fname:
+            Handler.salvage_log.append({"ts": time.time(), "pattern": f"fallback→{fname}"})
 
         if result.get("salvage"):
             Handler.salvage_log.append({
@@ -290,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                 with urlopen(f"{url}/models", timeout=5) as r:
                     data = json.load(r)
                 models = [m.get("id") for m in data.get("data", []) if m.get("id")]
-                Handler.model_id = models[0] if models else ""
+                Handler.model_id = models[0] if models else _TARGET_MODELS.get(name, "")
             except Exception:
                 pass
             Handler.current_target = name

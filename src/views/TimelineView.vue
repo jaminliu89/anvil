@@ -8,7 +8,6 @@ import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
 import { listConvs, saveConv, loadConv, deleteConv, newConvId } from '@/utils/conv-store'
 
-onMounted(() => { registerAllAdapters() })
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
@@ -205,6 +204,17 @@ async function handleSubmit(parsed: Parsed) {
   }
   busy.value = false
 }
+const targetStatus = ref<Record<string, boolean>>({})
+
+async function refreshTargetStatus() {
+  try {
+    const r = await fetch(`${BRIDGE}/capabilities`, { signal: AbortSignal.timeout(5000) })
+    const j = await r.json()
+    targetStatus.value = j.target_status || {}
+  } catch {}
+}
+
+onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
 </script>
 
 <template>
