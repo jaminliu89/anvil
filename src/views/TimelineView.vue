@@ -17,7 +17,7 @@ const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
 const autoSearch = ref(localStorage.getItem('anvil.search') !== '0')
 
-// agent loop 推理流式累积区（按键 -> 正在累积的 reasoning 文本）
+// agent loop 推理流式累积区
 const reasoningRef = ref('')
 
 function persistAdapter(id: string) {
@@ -202,7 +202,6 @@ async function handleSubmit(parsed: Parsed) {
     addEntry(result.type, parsed.adapter.id, result as unknown as Record<string, unknown>)
     persistConv()
 
-    // agent-loop type: start SSE connection
     if (result.type === 'agent-loop') {
       const entryId = entries.value[entries.value.length - 1].id
       startAgentLoop(result.content as string, entryId)
@@ -300,268 +299,801 @@ async function refreshTargetStatus() {
 }
 
 onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
+
+// 根据 entry 类型返回节点样式类
+function getDotClass(entry: TimelineEntry): string {
+  if (entry.type === 'message' && entry.data.role === 'user') return 'user'
+  if (entry.type === 'system') return 'system'
+  if (entry.type === 'agent-loop') {
+    const status = entry.data.status as string
+    return `loop ${status || ''}`
+  }
+  return 'agent'
+}
 </script>
 
 <template>
   <div class="timeline-view">
-    <div class="messages" ref="messagesEl">
+    <div class="timeline-container" ref="messagesEl">
+      <!-- 背景时间轴竖线 -->
+      <div class="timeline-rail"></div>
+
       <div v-if="entries.length === 0" class="empty-state">
-        <div class="empty-title">Anvil</div>
-        <div class="empty-sub">打字聊天，斜杠调工具。/switch [id] 切换聊天引擎。</div>
-        <div class="empty-hints">
-          <div class="hint-text">帮我重构这个工具函数 → 起一个异步编码任务</div>
-          <div class="hint-text">/switch ling → 切换聊天引擎到 Ling</div>
-          <div class="hint-text">/dsh 分析一下最近的 AI 新闻 → 多步骤 agent loop</div>
-        </div>
-      </div>
-
-      <div v-for="entry in entries" :key="entry.id" class="entry"
-           :class="[entry.type === 'message' && entry.data.role === 'user' ? 'entry-right' : 'entry-left']">
-
-        <div v-if="entry.type === 'system'" class="system-msg">{{ entry.data.content }}</div>
-
-        <div v-else-if="entry.type === 'message'" class="bubble"
-             :class="entry.data.role === 'user' ? 'bubble-user' : 'bubble-agent'">
-          <div v-if="entry.data.role !== 'user'" class="model-label">{{ entry.adapterId }}</div>
-          <div v-if="entry.data.reasoning && entry.data.role !== 'user'"
-               class="think-toggle"
-               @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('visible')">
-            展开思考</div>
-          <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
-          <div class="message-row">
-            <div v-if="entry.data.role === 'user'" class="content">{{ entry.data.content }}</div>
-            <div v-else class="content" v-html="markdownToHtml(entry.data.content as string)"></div>
-            <div v-if="entry.data.role === 'user'" class="user-avatar">{{ (entry.data.content as string).charAt(0).toUpperCase() }}</div>
-          </div>
-        </div>
-
-        <div v-else-if="entry.type === 'plan'" class="plan-card">
-          <div v-if="entry.data.title" class="plan-title">{{ entry.data.title }}</div>
-          <div v-if="entry.data.sessionId" class="plan-meta">session {{ String(entry.data.sessionId).slice(0, 14) }} · 分支 {{ entry.data.branch }}</div>
-          <div v-if="entry.data.steps" class="plan-steps">
-            <div v-for="step in (entry.data.steps as { id: string; title: string; status: string }[])" :key="step.id" class="plan-step">
-              <span class="step-status" :class="step.status"></span>
-              <span>{{ step.title }}</span>
-            </div>
-          </div>
-          <button v-if="entry.data.sessionId && !entry.data.approved" class="approve-btn" @click="entry.data.approved = true; approvePlan(entry)">
-            批准执行
+        <div class="empty-brand">Anvil</div>
+        <div class="empty-desc">说点什么，我来帮你搞定。</div>
+        <div class="empty-suggestions">
+          <button class="suggestion-chip" @click="() => { /* TODO: 直接发送 */ }">
+            <span class="chip-icon">⚡</span>
+            <span class="chip-text">帮我分析一下最近的 AI 新闻</span>
           </button>
-          <div v-else-if="entry.data.approved" class="plan-approved">已批准，执行中</div>
+          <button class="suggestion-chip" @click="() => {}">
+            <span class="chip-icon">⌨️</span>
+            <span class="chip-text">用 Python 写一个快速排序</span>
+          </button>
+          <button class="suggestion-chip" @click="() => {}">
+            <span class="chip-icon">🔍</span>
+            <span class="chip-text">查一下今天的天气</span>
+          </button>
         </div>
+      </div>
 
-        <div v-else-if="entry.type === 'train'" class="train-msg">{{ entry.data.content }}</div>
+      <!-- Entry 列表 -->
+      <div
+        v-for="entry in entries"
+        :key="entry.id"
+        class="tl-entry"
+        :class="{
+          'tl-entry--user': entry.type === 'message' && entry.data.role === 'user',
+          'tl-entry--system': entry.type === 'system',
+          'tl-entry--agent-loop': entry.type === 'agent-loop',
+        }"
+      >
+        <!-- 时间轴节点 -->
+        <div class="tl-dot" :class="getDotClass(entry)"></div>
 
-        <!-- Agent Loop 卡片 -->
-        <div v-else-if="entry.type === 'agent-loop'" class="agent-loop-card">
-          <div class="loop-header">
-            <span class="loop-title">Agent Loop</span>
-            <span class="loop-status" :class="String(entry.data.status)">
-              {{ entry.data.status === 'running' ? '运行中' : entry.data.status === 'done' ? '完成' : entry.data.status === 'error' ? '错误' : '...' }}
-            </span>
+        <!-- 内容区 -->
+        <div class="tl-content">
+          <!-- 系统消息 -->
+          <div v-if="entry.type === 'system'" class="system-text">
+            <span class="system-adapter">{{ entry.adapterId }}</span>
+            <span class="system-content">{{ entry.data.content as string }}</span>
           </div>
 
-          <!-- 步骤列表 -->
-          <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="loop-steps">
-            <div v-for="step in (entry.data.steps as { id: string; title: string; status: string; content?: string; result?: unknown }[])"
-                 :key="step.id" class="loop-step" :class="step.status">
-              <div class="step-head">
-                <span class="step-dot" :class="step.status"></span>
-                <span class="step-title">{{ step.title }}</span>
+          <!-- 普通消息气泡 -->
+          <div v-else-if="entry.type === 'message'" class="bubble"
+               :class="entry.data.role === 'user' ? 'bubble--user' : 'bubble--agent'">
+            <div v-if="entry.data.role !== 'user'" class="bubble-meta">
+              <span class="adapter-name">{{ entry.adapterId }}</span>
+            </div>
+            <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning-block">
+              <div class="reasoning-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                思考过程
               </div>
-              <div v-if="step.content && step.id !== 'answer'" class="step-content">
-                {{ step.content }}
+              <div class="reasoning-body" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+            </div>
+            <div class="bubble-content" v-html="markdownToHtml(entry.data.content as string)"></div>
+          </div>
+
+          <!-- Plan 卡片 -->
+          <div v-else-if="entry.type === 'plan'" class="plan-block">
+            <div v-if="entry.data.title" class="plan-title">{{ entry.data.title as string }}</div>
+            <div v-if="entry.data.sessionId" class="plan-meta">
+              session {{ String(entry.data.sessionId).slice(0, 14) }} · 分支 {{ entry.data.branch }}
+            </div>
+            <div v-if="entry.data.steps" class="plan-steps">
+              <div v-for="step in (entry.data.steps as { id: string; title: string; status: string }[])"
+                   :key="step.id" class="plan-step">
+                <span class="plan-step-dot" :class="step.status"></span>
+                <span class="plan-step-title">{{ step.title }}</span>
               </div>
+            </div>
+            <button v-if="entry.data.sessionId && !entry.data.approved"
+                    class="approve-btn"
+                    @click="entry.data.approved = true; approvePlan(entry)">
+              批准执行
+            </button>
+            <div v-else-if="entry.data.approved" class="plan-approved">已批准，执行中</div>
+          </div>
+
+          <!-- Agent Loop 任务卡（无框，时间轴式） -->
+          <div v-else-if="entry.type === 'agent-loop'" class="loop-block">
+            <div class="loop-header">
+              <span class="loop-adapter">{{ entry.adapterId }}</span>
+              <span class="loop-status" :class="String(entry.data.status)">
+                {{ entry.data.status === 'running' ? '运行中' :
+                   entry.data.status === 'done' ? '完成' :
+                   entry.data.status === 'error' ? '错误' : '...' }}
+              </span>
+            </div>
+
+            <!-- 步骤时间轴 -->
+            <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="loop-steps">
+              <div v-for="(step, idx) in (entry.data.steps as { id: string; title: string; status: string; content?: string; result?: unknown }[])"
+                   :key="step.id"
+                   class="loop-step"
+                   :class="step.status">
+                <div class="step-rail">
+                  <span class="step-dot" :class="step.status"></span>
+                  <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
+                </div>
+                <div class="step-body">
+                  <div class="step-title">{{ step.title }}</div>
+                  <div v-if="step.content && step.id !== 'answer'" class="step-content">
+                    {{ step.content }}
+                  </div>
+                  <div v-if="step.result && typeof step.result === 'string'" class="step-result">
+                    {{ step.result }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- reasoning 折叠 -->
+            <div v-if="entry.data.reasoning" class="loop-reasoning">
+              <div class="reasoning-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                思考过程
+              </div>
+              <div class="reasoning-body" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+            </div>
+
+            <!-- 最终回答 -->
+            <div v-if="entry.data.answer" class="loop-answer">
+              <div class="answer-label">最终回答</div>
+              <div class="answer-body" v-html="markdownToHtml(entry.data.answer as string)"></div>
+            </div>
+
+            <!-- 错误 -->
+            <div v-if="entry.data.status === 'error' && entry.data.error" class="loop-error">
+              {{ entry.data.error as string }}
             </div>
           </div>
 
-          <!-- reasoning 折叠区域 -->
-          <div v-if="entry.data.reasoning" class="loop-reasoning">
-            <div class="reasoning-toggle"
-                 @click="($event.target as HTMLElement).parentElement!.querySelector('.reasoning-body')?.classList.toggle('visible')">
-              展开思考过程
-            </div>
-            <div class="reasoning-body" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+          <!-- 训练消息 -->
+          <div v-else-if="entry.type === 'train'" class="train-text">
+            {{ entry.data.content as string }}
           </div>
 
-          <!-- 最终回答 -->
-          <div v-if="entry.data.answer" class="loop-answer">
-            <div class="answer-label">回答</div>
-            <div class="answer-body" v-html="markdownToHtml(entry.data.answer as string)"></div>
-          </div>
-
-          <!-- 错误 -->
-          <div v-if="entry.data.status === 'error' && entry.data.error" class="loop-error">
-            {{ entry.data.error as string }}
+          <!-- 其他执行消息 -->
+          <div v-else class="exec-text">
+            {{ entry.data.content as string }}
           </div>
         </div>
-
-        <div v-else class="exec-msg">{{ entry.data.content }}</div>
       </div>
     </div>
 
-    <div class="search-toggle">
-      <button class="search-btn" @click="startNewConv">+ 新对话</button>
-      <select class="conv-select" @change="switchConv(($event.target as HTMLSelectElement).value)">
-        <option value="" disabled selected>历史对话 ({{ convList.length }})</option>
-        <option v-for="c in convList" :key="c.id" :value="c.id">
-          {{ c.title }} · {{ new Date(c.updatedAt).toLocaleDateString() }}
-        </option>
-      </select>
-      <button v-if="convList.length" class="search-btn" @click="removeConv(convId)">删除当前</button>
-      <button class="search-btn" :class="{ active: autoSearch }" @click="toggleSearch()">
-        联网搜索
-      </button>
-      <span class="search-hint">{{ autoSearch ? '已开启' : '已关闭' }}</span>
+    <!-- 底部工具栏（Phase 4 会重构，先保留功能） -->
+    <div class="bottom-bar">
+      <div class="bar-left">
+        <button class="bar-btn" @click="startNewConv">+ 新对话</button>
+        <select class="bar-select" @change="switchConv(($event.target as HTMLSelectElement).value)">
+          <option value="" disabled selected>历史 ({{ convList.length }})</option>
+          <option v-for="c in convList" :key="c.id" :value="c.id">
+            {{ c.title }}
+          </option>
+        </select>
+        <button v-if="convList.length" class="bar-btn" @click="removeConv(convId)">删除</button>
+      </div>
+      <div class="bar-right">
+        <button class="bar-btn bar-toggle" :class="{ on: autoSearch }" @click="toggleSearch">
+          <span class="toggle-dot"></span>
+          联网搜索
+        </button>
+      </div>
     </div>
+
     <CommandBar @submit="handleSubmit" />
   </div>
 </template>
 
 <style scoped>
-.timeline-view { display: flex; flex-direction: column; height: 100%; }
-.messages { flex: 1; overflow-y: auto; padding: 24px; }
-.empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-.empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
-.empty-sub { font-size: 13px; color: var(--ink3); }
-.entry { margin-bottom: 16px; max-width: 78%; width: fit-content; min-width: 160px; }
-.entry-left { margin-right: auto; }
-.entry-right { margin-left: auto; }
-.bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; width: fit-content; }
-.bubble-user { background: var(--signal); color: var(--canvas); }
-.dark .bubble-user, [data-theme="dark"] .bubble-user { background: #D4D4D4; color: #141415; }
-.bubble-agent { background: var(--surface); border: 1px solid var(--line); color: var(--ink2); }
-.think-toggle { font-size: 12px; color: var(--ink4); cursor: pointer; user-select: none; border-bottom: 1px dashed var(--ink4); display: inline-block; margin-bottom: 4px; padding-bottom: 1px; }
-.reasoning { display: none; font-size: 12px; color: var(--ink3); background: var(--muted); border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
-.reasoning.visible { display: block; }
-.content { white-space: pre-wrap; word-break: break-word; }
-.system-msg { text-align: center; font-size: 12px; color: var(--ink3); margin: 12px 0; font-family: var(--mono); }
-.exec-msg { font-family: var(--mono); font-size: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 8px 0; }
-.train-msg { font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.plan-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-.plan-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; color: var(--ink); }
-.plan-meta { font-size: 11px; color: var(--ink4); font-family: var(--mono); margin-bottom: 12px; }
-.plan-steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.plan-step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink2); }
-.step-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.step-status.pending { background: var(--ink4); }
-.step-status.approved { background: var(--success); }
-.step-status.done { background: var(--success); }
-.step-status.running { background: var(--warning); }
-.approve-btn { padding: 6px 16px; background: var(--signal); color: var(--canvas); border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; margin-top: 12px; }
-.approve-btn:hover { opacity: 0.9; }
-.dark .approve-btn, [data-theme="dark"] .approve-btn { background: #D4D4D4; color: #141415; }
-.plan-approved { font-size: 12px; color: var(--success); margin-top: 12px; }
-
-.search-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 24px; border-bottom: 1px solid var(--line); }
-.search-btn {
-  padding: 4px 14px; font-size: 11px; font-family: var(--mono);
-  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--surface); color: var(--ink3);
-  transition: all var(--duration-micro);
-}
-.search-btn.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
-.search-hint { font-size: 11px; color: var(--ink4); }
-.conv-select {
-  font-size: 11px; font-family: var(--mono); color: var(--ink3);
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: 4px 8px; max-width: 220px; cursor: pointer;
+.timeline-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--canvas);
 }
 
-.content :deep(h1), .content :deep(h2), .content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
-.content :deep(h1) { font-size: 16px; }
-.content :deep(h2) { font-size: 15px; }
-.content :deep(h3) { font-size: 14px; }
-.content :deep(p) { margin: 6px 0; }
-.content :deep(ul), .content :deep(ol) { margin: 6px 0; padding-left: 20px; }
-.content :deep(li) { margin: 2px 0; }
-.content :deep(code) { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; font-family: var(--mono); }
-.content :deep(pre) { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-.content :deep(pre code) { background: none; border: none; padding: 0; }
-.content :deep(blockquote) { border-left: 3px solid var(--line); padding: 4px 12px; margin: 8px 0; color: var(--ink3); font-style: italic; }
-.content :deep(a) { color: var(--signal); text-decoration: underline; }
-.content :deep(hr) { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+/* ── 时间轴容器 ── */
+.timeline-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0 24px 0;
+  position: relative;
+  scroll-behavior: smooth;
+}
 
-/* Agent Loop 卡片 */
-.agent-loop-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 0;
-  overflow: hidden;
-  max-width: 90%;
+/* 背景竖线 */
+.timeline-rail {
+  position: absolute;
+  left: 52px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-subtle);
+  pointer-events: none;
+  z-index: 0;
 }
-.loop-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--muted);
-}
-.loop-title { font-size: 12px; font-weight: 600; color: var(--ink2); font-family: var(--mono); }
-.loop-status {
-  font-size: 11px; padding: 2px 8px; border-radius: 999px;
-  font-family: var(--mono);
-}
-.loop-status.running { background: var(--line); color: var(--ink2); }
-.loop-status.done { background: rgba(0,0,0,0.06); color: var(--ink); }
-.loop-status.error { background: #fee; color: #c00; }
 
-.loop-steps { padding: 8px 0; }
-.loop-step { padding: 6px 14px; }
-.loop-step.done { opacity: 0.7; }
-.loop-step.running { background: rgba(0,0,0,0.02); }
-.step-head { display: flex; align-items: center; gap: 8px; }
-.step-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--line); flex-shrink: 0;
+/* ── Entry 通用 ── */
+.tl-entry {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  padding: 6px 24px 6px 24px;
+  margin-bottom: 4px;
+  z-index: 1;
 }
-.step-dot.running { background: var(--signal); animation: pulse 1.5s ease-in-out infinite; }
-.step-dot.done { background: var(--signal); }
-.step-dot.failed { background: #c00; }
+
+.tl-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-left: 47px; /* 52px 中心 - 5px 半宽 = 47px */
+  margin-top: 8px;
+  background: var(--line);
+  border: 2px solid var(--canvas);
+  box-sizing: content-box;
+  z-index: 2;
+  transition: all 150ms ease;
+}
+
+.tl-dot.user {
+  background: var(--signal);
+  margin-left: auto;
+  margin-right: 47px;
+}
+
+.tl-dot.agent {
+  background: var(--ink3);
+}
+
+.tl-dot.system {
+  width: 4px;
+  height: 4px;
+  margin-left: 50px;
+  margin-top: 11px;
+  background: var(--line);
+  border: none;
+}
+
+.tl-dot.loop {
+  background: var(--signal);
+  width: 12px;
+  height: 12px;
+  margin-left: 46px;
+  margin-top: 7px;
+}
+
+.tl-dot.loop.running {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  50% { opacity: 0.4; }
 }
-.step-title { font-size: 12px; color: var(--ink2); }
-.step-content { font-size: 11px; color: var(--ink3); margin: 4px 0 0 16px; }
 
-/* reasoning 折叠区 */
-.loop-reasoning {
-  border-top: 1px solid var(--line);
-  padding: 0 14px;
+.tl-content {
+  flex: 1;
+  min-width: 0;
+  max-width: calc(100% - 100px);
+}
+
+/* 用户消息靠右 */
+.tl-entry--user {
+  flex-direction: row-reverse;
+}
+.tl-entry--user .tl-content {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── 空状态 ── */
+.empty-state {
+  height: 100%;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 40px;
+}
+.empty-brand {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.empty-desc {
+  font-size: 13px;
+  color: var(--ink3);
+}
+.empty-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  width: 100%;
+  max-width: 360px;
+}
+.suggestion-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink2);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 120ms ease;
+  font-family: inherit;
+}
+.suggestion-chip:hover {
+  border-color: var(--ink3);
+  background: var(--muted);
+}
+.chip-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.chip-text {
+  flex: 1;
+}
+
+/* ── 系统消息 ── */
+.system-text {
+  font-size: 12px;
+  color: var(--ink3);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  font-family: var(--mono);
+}
+.system-adapter {
+  color: var(--ink4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+}
+.system-content {
+  color: var(--ink3);
+}
+
+/* ── 消息气泡 ── */
+.bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  border-radius: 12px;
+}
+.bubble--agent {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  color: var(--ink2);
+  border-top-left-radius: 4px;
+}
+.bubble--user {
+  background: var(--signal);
+  color: var(--canvas);
+  border-top-right-radius: 4px;
+}
+.bubble-meta {
+  font-size: 11px;
+  color: var(--ink3);
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bubble--user .bubble-meta {
+  color: rgba(255,255,255,0.6);
+}
+.bubble-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* reasoning */
+.reasoning-block {
+  margin-bottom: 8px;
 }
 .reasoning-toggle {
-  font-size: 11px; color: var(--ink4); cursor: pointer;
-  border-bottom: 1px dashed var(--ink4); display: inline-block;
-  padding: 8px 0 4px; user-select: none;
+  font-size: 11px;
+  color: var(--ink3);
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px dashed var(--line);
+  display: inline-block;
+  margin-bottom: 4px;
+  padding-bottom: 1px;
 }
 .reasoning-body {
   display: none;
-  font-size: 12px; color: var(--ink3); line-height: 1.6;
-  background: var(--muted); border-radius: 8px;
-  padding: 10px 12px; margin: 6px 0 10px;
-  white-space: pre-wrap; max-height: 240px; overflow-y: auto;
+  font-size: 12px;
+  color: var(--ink3);
+  background: var(--muted);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  line-height: 1.55;
 }
-.reasoning-body.visible { display: block; }
-.reasoning-body :deep(p) { margin: 4px 0; }
+.reasoning-body.open { display: block; }
 
+/* ── Plan 卡片 ── */
+.plan-block {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  max-width: 85%;
+}
+.plan-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--ink);
+}
+.plan-meta {
+  font-size: 11px;
+  color: var(--ink4);
+  font-family: var(--mono);
+  margin-bottom: 10px;
+}
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink2);
+}
+.plan-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.plan-step-dot.pending { background: var(--ink4); }
+.plan-step-dot.approved { background: var(--success); }
+.plan-step-dot.done { background: var(--success); }
+.plan-step-dot.running { background: var(--warning); }
+
+.approve-btn {
+  padding: 6px 16px;
+  background: var(--signal);
+  color: var(--canvas);
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 8px;
+}
+.approve-btn:hover { opacity: 0.9; }
+.plan-approved {
+  font-size: 12px;
+  color: var(--success);
+  margin-top: 8px;
+}
+
+/* ── Agent Loop 任务卡（时间轴式） ── */
+.loop-block {
+  max-width: 90%;
+  padding-top: 4px;
+}
+
+.loop-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.loop-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.loop-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  background: var(--muted);
+  color: var(--ink2);
+}
+.loop-status.done {
+  background: var(--muted);
+  color: var(--success);
+}
+.loop-status.error {
+  background: #fef5f5;
+  color: var(--error);
+}
+
+/* 步骤时间轴 */
+.loop-steps {
+  margin-left: 8px;
+  margin-bottom: 12px;
+  border-left: 1px solid var(--line-subtle);
+  padding-left: 16px;
+}
+.loop-step {
+  position: relative;
+  padding-bottom: 12px;
+  display: flex;
+  gap: 10px;
+}
+.loop-step:last-child {
+  padding-bottom: 0;
+}
+.step-rail {
+  position: absolute;
+  left: -21px;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.step-dot.running {
+  background: var(--signal);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.step-dot.done {
+  background: var(--success);
+}
+.step-dot.failed {
+  background: var(--error);
+}
+.step-line {
+  width: 1px;
+  flex: 1;
+  min-height: 16px;
+  background: var(--line-subtle);
+  margin-top: 4px;
+}
+.step-body {
+  flex: 1;
+  min-width: 0;
+}
+.step-title {
+  font-size: 13px;
+  color: var(--ink2);
+  font-weight: 500;
+}
+.loop-step.done .step-title {
+  color: var(--ink3);
+}
+.step-content {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.step-result {
+  font-size: 12px;
+  color: var(--success);
+  margin-top: 4px;
+  font-family: var(--mono);
+}
+
+/* loop reasoning */
+.loop-reasoning {
+  margin: 8px 0 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line-subtle);
+}
+.loop-reasoning .reasoning-toggle {
+  margin-left: 8px;
+}
+.loop-reasoning .reasoning-body {
+  margin-left: 8px;
+  display: none;
+}
+.loop-reasoning .reasoning-body.open {
+  display: block;
+}
+
+/* 最终回答 */
 .loop-answer {
-  border-top: 1px solid var(--line);
-  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 8px;
 }
 .answer-label {
-  font-size: 11px; font-family: var(--mono); color: var(--ink4);
-  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--ink3);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
-.answer-body { font-size: 13px; line-height: 1.6; color: var(--ink); }
-.answer-body :deep(p) { margin: 6px 0; }
-.answer-body :deep(ul), .answer-body :deep(ol) { margin: 6px 0; padding-left: 20px; }
-.answer-body :deep(code) { background: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; font-family: var(--mono); }
-.answer-body :deep(pre) { background: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-.answer-body :deep(pre code) { background: none; border: none; padding: 0; }
+.answer-body {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+}
 
 .loop-error {
-  padding: 10px 14px; color: #c00; font-size: 12px;
-  border-top: 1px solid #fdd; background: #fef5f5;
+  padding: 10px 14px;
+  color: var(--error);
+  font-size: 12px;
+  background: #fef5f5;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+/* 训练消息 */
+.train-text {
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  max-width: 85%;
+}
+
+/* 其他执行消息 */
+.exec-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow: auto;
+  max-width: 85%;
+}
+
+/* ── Markdown 样式 ── */
+.bubble-content :deep(h1), .bubble-content :deep(h2), .bubble-content :deep(h3),
+.answer-body :deep(h1), .answer-body :deep(h2), .answer-body :deep(h3) {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.bubble-content :deep(h1), .answer-body :deep(h1) { font-size: 16px; }
+.bubble-content :deep(h2), .answer-body :deep(h2) { font-size: 15px; }
+.bubble-content :deep(h3), .answer-body :deep(h3) { font-size: 14px; }
+.bubble-content :deep(p), .answer-body :deep(p) { margin: 6px 0; }
+.bubble-content :deep(ul), .bubble-content :deep(ol),
+.answer-body :deep(ul), .answer-body :deep(ol) {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.bubble-content :deep(li), .answer-body :deep(li) { margin: 2px 0; }
+.bubble-content :deep(code), .answer-body :deep(code) {
+  background: var(--muted);
+  border: 1px solid var(--line-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.bubble--user .bubble-content :deep(code) {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.2);
+  color: var(--canvas);
+}
+.bubble-content :deep(pre), .answer-body :deep(pre) {
+  background: var(--muted);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.bubble-content :deep(pre code), .answer-body :deep(pre code) {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.bubble-content :deep(blockquote), .answer-body :deep(blockquote) {
+  border-left: 3px solid var(--line);
+  padding: 4px 12px;
+  margin: 8px 0;
+  color: var(--ink3);
+  font-style: italic;
+}
+.bubble-content :deep(a), .answer-body :deep(a) {
+  color: var(--signal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bubble--user .bubble-content :deep(a) {
+  color: var(--canvas);
+}
+.bubble-content :deep(hr), .answer-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
+.reasoning-body :deep(p) { margin: 4px 0; }
+
+/* ── 底部工具栏 ── */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--line-subtle);
+  background: var(--surface);
+}
+.bar-left, .bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bar-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: var(--mono);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--canvas);
+  color: var(--ink3);
+  transition: all 120ms ease;
+}
+.bar-btn:hover {
+  color: var(--ink);
+  border-color: var(--ink3);
+}
+.bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.toggle-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+}
+.bar-toggle.on .toggle-dot {
+  background: var(--success);
+}
+.bar-select {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--ink3);
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 200px;
+  cursor: pointer;
 }
 </style>
