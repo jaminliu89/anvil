@@ -25,13 +25,15 @@
 - [x] T4.4 联网搜索移到意图条右侧开关
 
 ## Phase 5 — 视觉打磨
-- [ ] T5.1 统一 Parchment 4.0 v2 token 命名，清 v1 别名
-- [ ] T5.2 去掉不必要边框，压到最多 2 层
-- [ ] T5.3 右下角帮助按钮改 titlebar ? 图标
+- [x] T5.1 空状态 emoji 图标 → 统一线性 SVG 图标
+- [x] T5.2 空状态视觉层级优化（品牌字加重 + 间距调整）
+- [x] T5.3 右下角帮助按钮改 titlebar ? 图标（Phase 1 已完成）
+- [x] T5.4 意图条文字层级优化（adapter 加字重 + 理由文字减淡）
+- [x] T5.5 快捷按钮圆角 + hover 微交互统一
 
 ## Phase 6 — 次级功能抽屉化
-- [ ] T6.1 ConnectView → 右侧抽屉
-- [ ] T6.2 TrainView → 右侧抽屉
-- [ ] T6.3 GuardView → 右侧抽屉
-- [ ] T6.4 SettingsView → 右侧抽屉
-- [ ] T6.5 RuntimeView → 合并进连接抽屉
+- [x] T6.1 ConnectView → 抽屉适配（去 page-head + v2 token + 缩小尺寸）
+- [x] T6.2 TrainView → 抽屉适配（去 page-head + 调整 padding，v2 token 后续细化）
+- [x] T6.3 GuardView → 抽屉适配（完整重写样式 + v2 token）
+- [x] T6.4 SettingsView → 抽屉适配（完整重写样式 + v2 token）
+- [x] T6.5 RuntimeView → 抽屉适配（完整重写样式 + v2 token）

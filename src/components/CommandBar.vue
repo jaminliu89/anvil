@@ -277,11 +277,10 @@ const groupedAdapters = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 16px;
+  padding: 8px 16px 4px;
   font-size: 11px;
   color: var(--ink3);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line-subtle);
+  background: var(--canvas);
   position: relative;
 }
 .intent-left {
@@ -291,6 +290,7 @@ const groupedAdapters = computed(() => {
 }
 .intent-label {
   color: var(--ink4);
+  font-size: 11px;
 }
 .intent-adapter {
   display: inline-flex;
@@ -301,7 +301,7 @@ const groupedAdapters = computed(() => {
   border: 1px solid var(--line);
   background: var(--canvas);
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
   font-size: 11px;
   cursor: pointer;
   font-family: inherit;
@@ -312,6 +312,7 @@ const groupedAdapters = computed(() => {
 }
 .intent-reason {
   color: var(--ink4);
+  font-size: 11px;
 }
 .intent-right {
   display: flex;

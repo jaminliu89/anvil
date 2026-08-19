@@ -387,15 +387,23 @@ function getDotClass(entry: TimelineEntry): string {
         <div class="empty-desc">说点什么，我来帮你搞定。</div>
         <div class="empty-suggestions">
           <button class="suggestion-chip" @click="quickSend('帮我分析一下最近的 AI 新闻')">
-            <span class="chip-icon">⚡</span>
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
             <span class="chip-text">帮我分析一下最近的 AI 新闻</span>
           </button>
           <button class="suggestion-chip" @click="quickSend('用 Python 写一个快速排序')">
-            <span class="chip-icon">⌨️</span>
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6"></polyline>
+              <polyline points="8 6 2 12 8 18"></polyline>
+            </svg>
             <span class="chip-text">用 Python 写一个快速排序</span>
           </button>
           <button class="suggestion-chip" @click="quickSend('查一下今天的天气')">
-            <span class="chip-icon">🔍</span>
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
             <span class="chip-text">查一下今天的天气</span>
           </button>
         </div>
@@ -643,24 +651,25 @@ function getDotClass(entry: TimelineEntry): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 0;
   padding: 0 40px;
 }
 .empty-brand {
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 700;
   color: var(--ink);
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
 }
 .empty-desc {
   font-size: 13px;
   color: var(--ink3);
+  margin-bottom: 28px;
 }
 .empty-suggestions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 6px;
   width: 100%;
   max-width: 360px;
 }
@@ -671,7 +680,7 @@ function getDotClass(entry: TimelineEntry): string {
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--canvas);
   color: var(--ink2);
   font-size: 13px;
   cursor: pointer;
@@ -681,11 +690,15 @@ function getDotClass(entry: TimelineEntry): string {
 }
 .suggestion-chip:hover {
   border-color: var(--ink3);
-  background: var(--muted);
+  background: var(--surface);
+  transform: translateY(-1px);
 }
 .chip-icon {
-  font-size: 14px;
-  line-height: 1;
+  flex-shrink: 0;
+  color: var(--ink3);
+}
+.suggestion-chip:hover .chip-icon {
+  color: var(--ink2);
 }
 .chip-text {
   flex: 1;

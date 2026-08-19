@@ -25,11 +25,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="view">
-    <div class="page-head">
-      <h1 class="page-title">设置</h1>
-    </div>
-
+  <div class="settings-view">
     <div class="settings">
       <!-- 通用 -->
       <div class="section">
@@ -99,7 +95,7 @@ onMounted(async () => {
         <div class="setting-list">
           <div class="setting-item about-item">
             <div class="about-logo">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
             </div>
@@ -116,41 +112,29 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.view {
-  padding: var(--space-8) var(--space-8);
-  max-width: 560px;
-}
-
-.page-head {
-  margin-bottom: var(--space-6);
-}
-
-.page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
-}
+.settings-view { padding: 12px 16px 16px; }
 
 /* 设置分组 */
 .settings {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: 16px;
 }
 
 .section-label {
-  font-size: var(--font-2xs);
-  font-weight: var(--font-semibold);
-  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink3);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: var(--space-3);
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  padding: 0 2px;
 }
 
 .setting-list {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -158,8 +142,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-soft);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-subtle);
 }
 
 .setting-item:last-child {
@@ -169,18 +153,18 @@ onMounted(async () => {
 .setting-info {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .setting-name {
-  font-size: var(--font-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
 }
 
 .setting-desc {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: 11px;
+  color: var(--ink3);
 }
 
 /* 开关 */
@@ -202,15 +186,15 @@ onMounted(async () => {
 .switch-track {
   position: absolute;
   inset: 0;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-soft);
+  background: var(--muted);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  transition: all var(--transition-base);
+  transition: all 150ms ease;
 }
 
 .switch input:checked + .switch-track {
-  background: var(--color-signal);
-  border-color: var(--color-signal);
+  background: var(--signal);
+  border-color: var(--signal);
 }
 
 .switch-track::after {
@@ -220,9 +204,9 @@ onMounted(async () => {
   height: 14px;
   left: 2px;
   top: 2px;
-  background: var(--color-bg);
+  background: var(--canvas);
   border-radius: 50%;
-  transition: transform var(--transition-base);
+  transition: transform 150ms ease;
 }
 
 .switch input:checked + .switch-track::after {
@@ -233,43 +217,43 @@ onMounted(async () => {
 .theme-toggle {
   display: flex;
   gap: 0;
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   overflow: hidden;
 }
 
 .theme-btn {
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--font-2xs);
-  font-weight: var(--font-medium);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
   border: none;
-  color: var(--color-text-tertiary);
-  background: var(--color-bg);
-  transition: all var(--transition-fast);
+  color: var(--ink3);
+  background: var(--canvas);
+  transition: all 120ms ease;
 }
 
 .theme-btn.active {
-  color: var(--color-bg);
-  background: var(--color-signal);
+  color: var(--canvas);
+  background: var(--signal);
 }
 
 .theme-btn:first-child {
-  border-right: 1px solid var(--color-border-soft);
+  border-right: 1px solid var(--line);
 }
 
 /* 关于 */
 .about-item {
-  gap: var(--space-3);
+  gap: 10px;
 }
 
 .about-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--color-signal-soft);
-  color: var(--color-signal);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--signalSoft);
+  color: var(--signal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -285,17 +269,18 @@ onMounted(async () => {
 }
 
 .about-name {
-  font-size: var(--font-sm);
-  font-weight: var(--font-semibold);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .about-ver {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: 11px;
+  color: var(--ink3);
 }
 
 .about-desc {
-  font-size: var(--font-2xs);
-  color: var(--color-text-tertiary);
+  font-size: 11px;
+  color: var(--ink3);
 }
 </style>

@@ -182,11 +182,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="view">
-    <div class="page-head">
-      <h1 class="page-title">训练</h1>
-      <p class="page-sub">在本地微调模型，无需打开终端</p>
-    </div>
+  <div class="train-view">
 
     <!-- 桥梁状态 -->
     <div class="card bridge-card">
@@ -321,20 +317,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.view {
-  padding: var(--space-8);
-  max-width: 640px;
-}
-.page-head { margin-bottom: var(--space-6); }
-.page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
-}
-.page-sub {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
+.train-view {
+  padding: 12px 16px 16px;
 }
 
 /* 卡片通用 */
