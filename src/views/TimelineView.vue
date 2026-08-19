@@ -163,6 +163,38 @@ async function handleSubmit(parsed: Parsed) {
   }
 
   if (parsed.type === 'builtin') {
+    // 意图选择器触发的：切换 adapter 后发送聊天
+    if (parsed.command === 'switch_and_chat') {
+      const [adapterId, text] = (parsed.args as string).split(':::')
+      const target = get(adapterId)
+      if (target && text) {
+        persistAdapter(adapterId)
+        // 直接走聊天逻辑
+        addEntry('message', adapterId, { role: 'user', content: text })
+        persistConv()
+
+        if (target.chat) {
+          const history = entries.value
+            .filter(e => e.type === 'message' && e.adapterId === adapterId)
+            .slice(0, -1)
+            .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+          try {
+            const result = await target.chat(history, text)
+            addEntry('message', adapterId, {
+              role: 'assistant', content: result.content, reasoning: result.reasoning,
+            })
+            persistConv()
+          } catch (e) {
+            addEntry('system', adapterId, { content: `错误: ${e}` })
+          }
+        } else {
+          addEntry('system', adapterId, { content: '当前适配器不支持聊天。' })
+        }
+      }
+      busy.value = false
+      return
+    }
+
     if (parsed.command === 'switch') {
       const targetId = parsed.args
       if (!targetId) {
@@ -298,6 +330,38 @@ async function refreshTargetStatus() {
   } catch {}
 }
 
+// 直接发送一条消息（空状态建议卡片点击用）
+function quickSend(text: string) {
+  if (busy.value) return
+  busy.value = true
+
+  addEntry('message', currentAdapterId.value, { role: 'user', content: text })
+  persistConv()
+
+  const adapter = get(currentAdapterId.value)
+  if (adapter?.chat) {
+    const history = entries.value
+      .filter(e => e.type === 'message' && e.adapterId === currentAdapterId.value)
+      .slice(0, -1)
+      .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+    try {
+      adapter.chat(history, text).then(result => {
+        addEntry('message', currentAdapterId.value, {
+          role: 'assistant', content: result.content, reasoning: result.reasoning,
+        })
+        persistConv()
+        busy.value = false
+      })
+    } catch (e) {
+      addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
+      busy.value = false
+    }
+  } else {
+    addEntry('system', currentAdapterId.value, { content: '当前适配器不支持聊天。' })
+    busy.value = false
+  }
+}
+
 onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
 
 // 根据 entry 类型返回节点样式类
@@ -322,15 +386,15 @@ function getDotClass(entry: TimelineEntry): string {
         <div class="empty-brand">Anvil</div>
         <div class="empty-desc">说点什么，我来帮你搞定。</div>
         <div class="empty-suggestions">
-          <button class="suggestion-chip" @click="() => { /* TODO: 直接发送 */ }">
+          <button class="suggestion-chip" @click="quickSend('帮我分析一下最近的 AI 新闻')">
             <span class="chip-icon">⚡</span>
             <span class="chip-text">帮我分析一下最近的 AI 新闻</span>
           </button>
-          <button class="suggestion-chip" @click="() => {}">
+          <button class="suggestion-chip" @click="quickSend('用 Python 写一个快速排序')">
             <span class="chip-icon">⌨️</span>
             <span class="chip-text">用 Python 写一个快速排序</span>
           </button>
-          <button class="suggestion-chip" @click="() => {}">
+          <button class="suggestion-chip" @click="quickSend('查一下今天的天气')">
             <span class="chip-icon">🔍</span>
             <span class="chip-text">查一下今天的天气</span>
           </button>
