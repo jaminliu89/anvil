@@ -7,7 +7,7 @@ import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
-import { listConvs, saveConv, loadConv, deleteConv, newConvId } from '@/utils/conv-store'
+import { listConvs, saveConv, loadConv, newConvId } from '@/utils/conv-store'
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
@@ -41,12 +41,6 @@ function switchConv(id: string) {
     entries.value = loaded
     localStorage.setItem('anvil.conv.current', id)
   }
-}
-
-function removeConv(id: string) {
-  deleteConv(id)
-  convList.value = listConvs()
-  if (convId.value === id) startNewConv()
 }
 
 function persistConv() {
@@ -364,6 +358,12 @@ function quickSend(text: string) {
 
 onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
 
+// 暴露给父组件
+defineExpose({
+  loadConv: switchConv,
+  newConversation: startNewConv,
+})
+
 // 根据 entry 类型返回节点样式类
 function getDotClass(entry: TimelineEntry): string {
   if (entry.type === 'message' && entry.data.role === 'user') return 'user'
@@ -527,27 +527,7 @@ function getDotClass(entry: TimelineEntry): string {
       </div>
     </div>
 
-    <!-- 底部工具栏（Phase 4 会重构，先保留功能） -->
-    <div class="bottom-bar">
-      <div class="bar-left">
-        <button class="bar-btn" @click="startNewConv">+ 新对话</button>
-        <select class="bar-select" @change="switchConv(($event.target as HTMLSelectElement).value)">
-          <option value="" disabled selected>历史 ({{ convList.length }})</option>
-          <option v-for="c in convList" :key="c.id" :value="c.id">
-            {{ c.title }}
-          </option>
-        </select>
-        <button v-if="convList.length" class="bar-btn" @click="removeConv(convId)">删除</button>
-      </div>
-      <div class="bar-right">
-        <button class="bar-btn bar-toggle" :class="{ on: autoSearch }" @click="toggleSearch">
-          <span class="toggle-dot"></span>
-          联网搜索
-        </button>
-      </div>
-    </div>
-
-    <CommandBar @submit="handleSubmit" />
+    <CommandBar :auto-search="autoSearch" @toggle-search="toggleSearch" @submit="handleSubmit" />
   </div>
 </template>
 
@@ -1105,59 +1085,4 @@ function getDotClass(entry: TimelineEntry): string {
 }
 
 .reasoning-body :deep(p) { margin: 4px 0; }
-
-/* ── 底部工具栏 ── */
-.bottom-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 16px;
-  border-top: 1px solid var(--line-subtle);
-  background: var(--surface);
-}
-.bar-left, .bar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.bar-btn {
-  padding: 4px 12px;
-  font-size: 11px;
-  font-family: var(--mono);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  cursor: pointer;
-  background: var(--canvas);
-  color: var(--ink3);
-  transition: all 120ms ease;
-}
-.bar-btn:hover {
-  color: var(--ink);
-  border-color: var(--ink3);
-}
-.bar-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.toggle-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--line);
-}
-.bar-toggle.on .toggle-dot {
-  background: var(--success);
-}
-.bar-select {
-  font-size: 11px;
-  font-family: var(--mono);
-  color: var(--ink3);
-  background: var(--canvas);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 4px 8px;
-  max-width: 200px;
-  cursor: pointer;
-}
 </style>

@@ -9,13 +9,16 @@ import GuardView from '@/views/GuardView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import RuntimeView from '@/views/RuntimeView.vue'
 import Drawer from '@/components/Drawer.vue'
+import HistoryPanel from '@/components/HistoryPanel.vue'
 
 const dshStore = useDshStore()
 const settingsStore = useSettingsStore()
 
 // 抽屉状态: null 关闭, 否则是 drawer key
-type DrawerKey = 'connect' | 'train' | 'guard' | 'settings' | 'runtime' | null
+type DrawerKey = 'history' | 'connect' | 'train' | 'guard' | 'settings' | 'runtime' | null
 const activeDrawer = ref<DrawerKey>(null)
+
+const timelineRef = ref<InstanceType<typeof TimelineView> | null>(null)
 
 interface NavItem {
   id: string
@@ -27,6 +30,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'timeline', icon: 'timeline', label: '时间线' },
+  { id: 'history', icon: 'list', label: '历史', drawer: 'history' },
   { id: 'connect', icon: 'link', label: '连接', drawer: 'connect' },
   { id: 'settings', icon: 'gear', label: '设置', drawer: 'settings' },
 ]
@@ -54,6 +58,7 @@ const isTimelineActive = computed(() => activeDrawer.value === null)
 
 // 抽屉标题映射
 const drawerTitles: Record<string, string> = {
+  history: '历史对话',
   connect: '连接',
   runtime: '运行时',
   train: '训练',
@@ -61,7 +66,7 @@ const drawerTitles: Record<string, string> = {
   settings: '设置',
 }
 
-// 抽屉内容组件映射（懒加载性能不重要，数量少）
+// 抽屉内容组件映射
 const drawerComponents: Record<string, ReturnType<typeof shallowRef>> = {
   connect: shallowRef(ConnectView),
   runtime: shallowRef(RuntimeView),
@@ -127,12 +132,12 @@ onMounted(async () => {
               <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
             </svg>
             <svg v-if="item.icon === 'list'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="8" y1="6" x2="21" y2="6"></line>
-              <line x1="8" y1="12" x2="21" y2="12"></line>
-              <line x1="8" y1="18" x2="21" y2="18"></line>
-              <line x1="3" y1="6" x2="3.01" y2="6"></line>
-              <line x1="3" y1="12" x2="3.01" y2="12"></line>
-              <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              <line x1="9" y1="6" x2="20" y2="6"></line>
+              <line x1="9" y1="12" x2="20" y2="12"></line>
+              <line x1="9" y1="18" x2="20" y2="18"></line>
+              <circle cx="5" cy="6" r="1.5" fill="currentColor" stroke="none"></circle>
+              <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"></circle>
+              <circle cx="5" cy="18" r="1.5" fill="currentColor" stroke="none"></circle>
             </svg>
             <svg v-if="item.icon === 'link'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -181,13 +186,26 @@ onMounted(async () => {
 
       <!-- 主内容区：时间线 -->
       <main class="content">
-        <TimelineView />
+        <TimelineView ref="timelineRef" />
       </main>
     </div>
 
     <!-- 右侧抽屉 -->
     <Drawer
-      v-if="activeDrawer"
+      v-if="activeDrawer === 'history'"
+      :open="activeDrawer === 'history'"
+      title="历史对话"
+      :width="320"
+      @close="activeDrawer = null"
+    >
+      <HistoryPanel
+        @select="(id: string) => { timelineRef?.loadConv(id); activeDrawer = null }"
+        @new="timelineRef?.newConversation()"
+      />
+    </Drawer>
+
+    <Drawer
+      v-if="activeDrawer && activeDrawer !== 'history'"
       :open="!!activeDrawer"
       :title="drawerTitles[activeDrawer!]"
       :width="400"

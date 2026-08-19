@@ -6,7 +6,14 @@ import { guessIntent, listAvailableAdapters } from '@/adapters/intent'
 import type { Parsed } from '@/adapters/parse'
 import type { IntentGuess } from '@/adapters/intent'
 
-const emit = defineEmits<{ submit: [parsed: Parsed] }>()
+const emit = defineEmits<{
+  submit: [parsed: Parsed]
+  'toggle-search': []
+}>()
+
+const props = defineProps<{
+  autoSearch?: boolean
+}>()
 
 const input = ref('')
 const showPalette = ref(false)
@@ -191,7 +198,20 @@ const groupedAdapters = computed(() => {
         </button>
         <span class="intent-reason">· {{ intent.reason }}</span>
       </div>
-      <span class="intent-hint">Enter 发送 · 点击切换</span>
+      <div class="intent-right">
+        <button
+          class="search-switch"
+          :class="{ on: props.autoSearch }"
+          @click="emit('toggle-search')"
+          :title="props.autoSearch ? '关闭联网搜索' : '开启联网搜索'"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <span>{{ props.autoSearch ? '搜索开' : '搜索关' }}</span>
+        </button>
+      </div>
 
       <!-- 意图选择下拉 -->
       <div v-if="showIntentPicker" class="intent-picker">
@@ -293,9 +313,33 @@ const groupedAdapters = computed(() => {
 .intent-reason {
   color: var(--ink4);
 }
-.intent-hint {
+.intent-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--canvas);
   color: var(--ink4);
+  font-size: 10px;
+  cursor: pointer;
   font-family: var(--mono);
+  transition: all 120ms ease;
+}
+.search-switch:hover {
+  color: var(--ink2);
+  border-color: var(--ink3);
+}
+.search-switch.on {
+  color: var(--success);
+  border-color: var(--success);
+  background: rgba(70, 100, 79, 0.06);
 }
 
 /* 意图选择下拉 */
