@@ -374,6 +374,13 @@ function getDotClass(entry: TimelineEntry): string {
   }
   return 'agent'
 }
+
+// 判断系统消息是否是错误/失败类
+function isSystemError(entry: TimelineEntry): boolean {
+  const content = String(entry.data.content || '')
+  const errorPatterns = ['错误', '失败', '不支持', '未启动', '未就绪', '不行', '无法', '拒绝']
+  return errorPatterns.some(p => content.includes(p))
+}
 </script>
 
 <template>
@@ -426,7 +433,8 @@ function getDotClass(entry: TimelineEntry): string {
         <!-- 内容区 -->
         <div class="tl-content">
           <!-- 系统消息 -->
-          <div v-if="entry.type === 'system'" class="system-text">
+          <div v-if="entry.type === 'system'" class="system-text"
+               :class="{ 'is-error': isSystemError(entry) }">
             <span class="system-adapter">{{ entry.adapterId }}</span>
             <span class="system-content">{{ entry.data.content as string }}</span>
           </div>
@@ -580,10 +588,10 @@ function getDotClass(entry: TimelineEntry): string {
 
 .tl-dot {
   flex-shrink: 0;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin-left: 47px; /* 52px 中心 - 5px 半宽 = 47px */
+  margin-left: 48px; /* 52px 中心 - 4px 半宽 = 48px */
   margin-top: 8px;
   background: var(--line);
   border: 2px solid var(--canvas);
@@ -594,8 +602,7 @@ function getDotClass(entry: TimelineEntry): string {
 
 .tl-dot.user {
   background: var(--signal);
-  margin-left: auto;
-  margin-right: 47px;
+  /* 用户消息节点也在左边线上，只是颜色不同 */
 }
 
 .tl-dot.agent {
@@ -613,9 +620,9 @@ function getDotClass(entry: TimelineEntry): string {
 
 .tl-dot.loop {
   background: var(--signal);
-  width: 12px;
-  height: 12px;
-  margin-left: 46px;
+  width: 10px;
+  height: 10px;
+  margin-left: 47px;
   margin-top: 7px;
 }
 
@@ -634,10 +641,7 @@ function getDotClass(entry: TimelineEntry): string {
   max-width: calc(100% - 100px);
 }
 
-/* 用户消息靠右 */
-.tl-entry--user {
-  flex-direction: row-reverse;
-}
+/* 用户消息靠右，但节点还在左边线上 */
 .tl-entry--user .tl-content {
   display: flex;
   justify-content: flex-end;
@@ -710,18 +714,36 @@ function getDotClass(entry: TimelineEntry): string {
   color: var(--ink3);
   display: flex;
   gap: 8px;
-  align-items: center;
-  padding: 4px 0;
-  font-family: var(--mono);
+  align-items: baseline;
+  padding: 2px 0;
+  line-height: 1.5;
 }
 .system-adapter {
   color: var(--ink4);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+  text-transform: lowercase;
+  font-variant: small-caps;
+  letter-spacing: 0.03em;
 }
 .system-content {
-  color: var(--ink3);
+  color: var(--ink2);
+}
+.system-text.is-error .system-content {
+  color: var(--error);
+}
+
+/* 连续系统消息收紧间距 */
+.tl-entry--system + .tl-entry--system {
+  margin-top: -2px;
+}
+.tl-entry--system + .tl-entry--system .tl-dot {
+  opacity: 0.5;
+  width: 4px;
+  height: 4px;
+  margin-left: 50px;
+  margin-top: 11px;
 }
 
 /* ── 消息气泡 ── */

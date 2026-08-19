@@ -82,9 +82,9 @@ const currentDrawerComponent = computed(() => {
 
 function statusLabel() {
   const s = dshStore.status
-  if (s === 'running') return '就绪'
+  if (s === 'running') return '运行中'
   if (s === 'starting') return '启动中'
-  if (s === 'error') return '未就绪'
+  if (s === 'error') return '异常'
   return '待机'
 }
 
