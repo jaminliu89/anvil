@@ -21,7 +21,7 @@ export interface AdapterStatus {
 
 export type ExecutionEntryType =
   | 'message' | 'system' | 'plan' | 'execution' | 'approval'
-  | 'diff' | 'pr' | 'log' | 'mcp-result' | 'train'
+  | 'diff' | 'pr' | 'log' | 'mcp-result' | 'train' | 'agent-loop'
 
 export interface ExecutionResult {
   type: ExecutionEntryType

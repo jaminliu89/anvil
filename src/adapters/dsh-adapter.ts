@@ -1,23 +1,36 @@
-// dsh-adapter — DeepSeek Harness 集成（三层：生命周期 / 插件 / 任务路由）
-// 走 bridge HTTP API，不依赖 Tauri invoke
+// dsh-adapter — DeepSeek Harness agent loop 集成
+// 走 bridge HTTP API，SSE 流式输出 agent loop 过程
+// v2: 多轮 action plan + reasoning 流式 + fetch 工具
 
 import type { Adapter, ExecutionResult } from './types'
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
-function statusMsg(msg: string): ExecutionResult {
-  return { type: 'system', content: msg }
+export interface AgentLoopStep {
+  id: string
+  title: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+  content?: string
+  result?: unknown
+}
+
+export interface AgentLoopCallbacks {
+  onStepStart?: (step: AgentLoopStep) => void
+  onStepUpdate?: (stepId: string, content: string) => void
+  onStepReasoning?: (stepId: string, content: string) => void  // 新增：推理增量
+  onStepDone?: (stepId: string, status: 'done' | 'failed', result?: unknown) => void
+  onFinal?: (content: string, meta: { steps: number; usedSearch: boolean; reasoning?: string }) => void
+  onError?: (message: string) => void
 }
 
 export const dshAdapter: Adapter = {
   id: 'dsh',
   name: 'DeepSeek Harness',
-  description: 'Agent 框架平台。插件生态 + agent loop + 任务路由。',
+  description: 'Agent 框架平台。agent loop + 联网搜索 + 多步骤执行。',
   commands: ['dsh'],
   capabilities: [
-    { type: 'agent-loop', provider: 'async', description: '复杂任务路由给 dsh agent loop' },
-    { type: 'plugin-system', provider: 'sync', description: 'dsh 插件发现与注册' },
-    { type: 'inspect', provider: 'sync', description: '服务生命周期管理' },
+    { type: 'agent-loop', provider: 'async', description: '多步骤 agent loop，自动决定是否联网搜索' },
+    { type: 'inspect', provider: 'sync', description: '服务状态检查' },
   ],
 
   async execute(_command: string, args: string): Promise<ExecutionResult> {
@@ -26,14 +39,18 @@ export const dshAdapter: Adapter = {
     const rest = trimmed.slice(sub.length).trim()
 
     switch (sub) {
-      case 'start':    return startDsh()
-      case 'stop':     return stopDsh()
-      case 'status':   return statusDsh()
-      case 'plugins':  return listPlugins()
-      case 'sessions': return listSessions()
-      case 'run':      return runAgentLoop(rest)
-      case '':         return statusMsg('用法: /dsh start|stop|status|plugins|sessions|run <prompt>')
-      default:         return runAgentLoop(trimmed)
+      case 'start':
+        return { type: 'system', content: 'DSH agent loop 已就绪。直接输入 /dsh <任务> 开始。' }
+      case 'stop':
+        return { type: 'system', content: '正在运行的 agent loop 会在当前步骤结束后停止。' }
+      case 'status':
+        return statusDsh()
+      case 'run':
+        return { type: 'agent-loop', title: 'Agent Loop', content: rest || '' }
+      case '':
+        return { type: 'system', content: '用法: /dsh <任务描述>\n\n示例:\n  /dsh 分析一下最近的 AI 新闻\n  /dsh 帮我查一下 Vite 5 的新特性' }
+      default:
+        return { type: 'agent-loop', title: 'Agent Loop', content: trimmed }
     }
   },
 
@@ -47,12 +64,101 @@ export const dshAdapter: Adapter = {
   },
 }
 
-async function startDsh(): Promise<ExecutionResult> {
-  return statusMsg('运行 npx @deepseek-ai/dsh 启动 dsh，或确认 bridge 已配置自动启动。')
-}
+/**
+ * 流式运行 agent loop（v2: 支持 reasoning 流式）
+ */
+export async function runAgentLoopStream(
+  prompt: string,
+  callbacks: AgentLoopCallbacks,
+  opts?: { search?: boolean; signal?: AbortSignal },
+): Promise<void> {
+  if (!prompt) {
+    callbacks.onError?.('prompt 不能为空')
+    return
+  }
 
-async function stopDsh(): Promise<ExecutionResult> {
-  return statusMsg('手动停止 dsh 进程：pkill -f dsh 或关闭启动它的终端。')
+  try {
+    const res = await fetch(`${BRIDGE}/dsh/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        search: opts?.search !== false,
+      }),
+      signal: opts?.signal,
+    })
+
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '')
+      callbacks.onError?.(`agent loop 启动失败 (${res.status}): ${text.slice(0, 200)}`)
+      return
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+
+      const events = buf.split('\n\n')
+      buf = events.pop() || ''
+
+      for (const evt of events) {
+        const lines = evt.split('\n')
+        let name = ''
+        let data = ''
+        for (const ln of lines) {
+          if (ln.startsWith('event: ')) name = ln.slice(7).trim()
+          else if (ln.startsWith('data: ')) data = ln.slice(6)
+        }
+        if (!name || !data) continue
+
+        try {
+          const obj = JSON.parse(data)
+
+          switch (name) {
+            case 'step_start':
+              callbacks.onStepStart?.({
+                id: obj.id,
+                title: obj.title,
+                status: obj.status || 'running',
+              })
+              break
+            case 'step_update':
+              callbacks.onStepUpdate?.(obj.id, obj.content || '')
+              break
+            case 'step_reasoning':  // 新增：推理增量事件
+              callbacks.onStepReasoning?.(obj.id, obj.content || '')
+              break
+            case 'step_done':
+              callbacks.onStepDone?.(obj.id, obj.status || 'done', obj.result)
+              break
+            case 'final':
+              callbacks.onFinal?.(obj.content || '', {
+                steps: obj.steps || 0,
+                usedSearch: !!obj.used_search,
+                reasoning: obj.reasoning || '',
+              })
+              break
+            case 'error':
+              callbacks.onError?.(obj.message || 'unknown error')
+              break
+          }
+        } catch {
+          // 忽略坏帧
+        }
+      }
+    }
+  } catch (e: unknown) {
+    if ((e as Error).name === 'AbortError') {
+      callbacks.onError?.('已取消')
+    } else {
+      callbacks.onError?.(String((e as Error)?.message || e))
+    }
+  }
 }
 
 async function statusDsh(): Promise<ExecutionResult> {
@@ -60,54 +166,11 @@ async function statusDsh(): Promise<ExecutionResult> {
     const res = await fetch(`${BRIDGE}/dsh/health`, { signal: AbortSignal.timeout(2000) })
     if (!res.ok) throw new Error()
     const json = await res.json()
-    return statusMsg(`dsh 运行中 · Web UI: http://localhost:3000 · 插件: ${json.plugins || 0}`)
+    return {
+      type: 'system',
+      content: `DSH agent loop 就绪 · 守卫库: ${json.dsh || 'unknown'}`,
+    }
   } catch {
-    return statusMsg('dsh 未运行。通过 bridge 启动或 /dsh start。')
-  }
-}
-
-async function listPlugins(): Promise<ExecutionResult> {
-  try {
-    const res = await fetch(`${BRIDGE}/dsh/plugins`, { signal: AbortSignal.timeout(3000) })
-    if (!res.ok) throw new Error()
-    const json = await res.json()
-    const plugins = json.plugins || []
-    if (plugins.length === 0) return statusMsg('dsh 运行中但无插件加载。')
-    const lines = plugins.map((p: { name: string }) => `  ${p.name}`).join('\n')
-    return statusMsg(`dsh 已加载插件:\n${lines}`)
-  } catch {
-    return statusMsg('无法获取插件列表。确认 bridge 运行 + dsh 已通过 bridge 初始化。')
-  }
-}
-
-async function listSessions(): Promise<ExecutionResult> {
-  try {
-    const res = await fetch(`${BRIDGE}/dsh/sessions`, { signal: AbortSignal.timeout(3000) })
-    if (!res.ok) throw new Error()
-    const json = await res.json()
-    const sessions = json.sessions || []
-    if (sessions.length === 0) return statusMsg('无活跃 dsh 会话。')
-    const lines = sessions.map((s: { id: string }) => `  ${s.id}`).join('\n')
-    return statusMsg(`dsh 活跃会话:\n${lines}`)
-  } catch {
-    return statusMsg('无法获取会话列表。')
-  }
-}
-
-async function runAgentLoop(prompt: string): Promise<ExecutionResult> {
-  if (!prompt) return statusMsg('用法: /dsh run <任务描述>')
-  try {
-    const res = await fetch(`${BRIDGE}/dsh/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
-      signal: AbortSignal.timeout(60000),
-    })
-    if (!res.ok) throw new Error()
-    const json = await res.json()
-    const result = json.result || '(空)'
-    return { type: 'execution', content: `dsh agent loop 结果:\n${String(result).slice(0, 5000)}` }
-  } catch {
-    return statusMsg('dsh agent loop 失败。确认 dsh 运行中。')
+    return { type: 'system', content: 'bridge 未启动。DSH agent loop 需要 bridge 运行。' }
   }
 }
