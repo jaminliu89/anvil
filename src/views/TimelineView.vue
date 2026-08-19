@@ -720,12 +720,12 @@ function isSystemError(entry: TimelineEntry): boolean {
 }
 .system-adapter {
   color: var(--ink4);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   flex-shrink: 0;
+  letter-spacing: 0.04em;
   text-transform: lowercase;
-  font-variant: small-caps;
-  letter-spacing: 0.03em;
+  font-variant: normal;
 }
 .system-content {
   color: var(--ink2);
@@ -905,7 +905,7 @@ function isSystemError(entry: TimelineEntry): boolean {
   color: var(--success);
 }
 .loop-status.error {
-  background: #fef5f5;
+  background: rgba(120, 75, 70, 0.06);
   color: var(--error);
 }
 
@@ -1026,7 +1026,7 @@ function isSystemError(entry: TimelineEntry): boolean {
   padding: 10px 14px;
   color: var(--error);
   font-size: 12px;
-  background: #fef5f5;
+  background: rgba(120, 75, 70, 0.06);
   border-radius: 8px;
   margin-top: 8px;
 }
