@@ -2,9 +2,11 @@
 // 注册插件、commands、系统托盘、全局快捷键
 
 pub mod dsh;
+pub mod pi;
 pub mod tray;
 pub mod shortcuts;
 pub mod system_commands;
+pub mod git_sandbox;
 
 /// 应用入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -27,8 +29,20 @@ pub fn run() {
             dsh::commands::dsh_stop,
             dsh::commands::dsh_status,
             dsh::commands::dsh_set_target,
+            pi::commands::pi_start,
+            pi::commands::pi_stop,
+            pi::commands::pi_status,
+            pi::commands::pi_send_prompt,
+            pi::commands::pi_check_installed,
             system_commands::toggle_window,
             system_commands::quit_app,
+            git_sandbox::sandbox_create,
+            git_sandbox::sandbox_discard,
+            git_sandbox::sandbox_merge,
+            git_sandbox::sandbox_diff,
+            git_sandbox::sandbox_apply_and_commit,
+            git_sandbox::sandbox_current_branch,
+            git_sandbox::sandbox_list_branches,
         ])
         // ====== 窗口事件：关闭 → 最小化到托盘 ======
         .on_window_event(|window, event| {
@@ -43,6 +57,9 @@ pub fn run() {
 
             // 初始化 sidecar 管理器（守卫服务）
             dsh::manager::init(handle)?;
+
+            // 初始化 Pi 管理器（按需启动）
+            pi::manager::init(handle)?;
 
             // 系统托盘
             tray::create_tray(handle)?;

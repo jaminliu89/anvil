@@ -40,7 +40,7 @@ export const lingAdapter: Adapter = {
 
     try {
       const ctrl = new AbortController()
-      const timer = setTimeout(() => { timedOut = true; ctrl.abort() }, 20000)
+      const timer = setTimeout(() => { timedOut = true; ctrl.abort() }, 120000)
       const res = await fetch(`${BRIDGE}/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,7 +90,7 @@ export const lingAdapter: Adapter = {
         // fallback non-streaming
         try {
           const ctrl2 = new AbortController()
-          const timer2 = setTimeout(() => ctrl2.abort(), 20000)
+          const timer2 = setTimeout(() => ctrl2.abort(), 120000)
           const res = await fetch(`${BRIDGE}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

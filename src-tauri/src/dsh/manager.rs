@@ -31,7 +31,7 @@ pub struct SidecarManager {
 }
 
 impl SidecarManager {
-    const DEFAULT_TARGET: &'static str = "http://localhost:18080/v1";
+    const DEFAULT_TARGET: &'static str = "deepseek";
 
     const fn new() -> Self {
         Self {
@@ -99,6 +99,9 @@ impl SidecarManager {
         let child_result = if let Some(bin_path) = &binary {
             log::info!("using bundled sidecar: {}", bin_path.display());
             std::process::Command::new(bin_path)
+                .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
+                .env("SILICONFLOW_API_KEY", std::env::var("SILICONFLOW_API_KEY").unwrap_or_default())
+                .env("TAVILY_API_KEY", std::env::var("TAVILY_API_KEY").unwrap_or_default())
                 .arg("--port")
                 .arg(SIDECAR_PORT.to_string())
                 .arg("--target")
@@ -112,12 +115,31 @@ impl SidecarManager {
                 .join("sidecar/bridge.py");
             let script = if script_dev.exists() {
                 script_dev
+            } else if let Ok(exe) = std::env::current_exe() {
+                // Anvil.app/Contents/Resources/sidecar/bridge.py
+                let _ = exe;
+                let candidates = vec![
+                    std::path::PathBuf::from("sidecar/bridge.py"),
+                    std::path::PathBuf::from("_up_/sidecar/bridge.py"),
+                    std::path::PathBuf::from("Resources/sidecar/bridge.py"),
+                ];
+                let mut found = candidates[0].clone();
+                for c in &candidates {
+                    if c.exists() {
+                        found = c.clone();
+                        break;
+                    }
+                }
+                found
             } else {
                 std::path::PathBuf::from("sidecar/bridge.py")
             };
             let python = find_python();
             log::info!("no bundled sidecar, using python3: {}", python);
             std::process::Command::new(&python)
+                .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
+                .env("SILICONFLOW_API_KEY", std::env::var("SILICONFLOW_API_KEY").unwrap_or_default())
+                .env("TAVILY_API_KEY", std::env::var("TAVILY_API_KEY").unwrap_or_default())
                 .arg(script.to_string_lossy().to_string())
                 .arg("--port")
                 .arg(SIDECAR_PORT.to_string())

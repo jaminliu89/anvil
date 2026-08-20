@@ -12,6 +12,7 @@
     "global-shortcut:default",
     "autostart:default",
     "store:default",
+    "core:default",
     "window-state:default",
     "dialog:allow-open",
     "dialog:allow-message"

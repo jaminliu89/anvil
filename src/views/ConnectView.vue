@@ -54,12 +54,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="view">
-    <div class="page-head">
-      <h1 class="page-title">连接</h1>
-      <p class="page-sub">通过 Unsloth 桥接编码 Agent</p>
-    </div>
-
+  <div class="connect-view">
     <div class="card status-card">
       <div class="status-row">
         <span class="label">Unsloth 工坊</span>
@@ -76,14 +71,14 @@ onMounted(() => {
     </div>
 
     <div v-if="unslothAlive" class="section-head">
-      <h2 class="section-title">可用 Agent</h2>
+      <h3 class="section-title">可用 Agent</h3>
     </div>
 
     <div v-if="unslothAlive" class="agent-list">
       <div v-for="agent in AGENTS" :key="agent.id" class="agent-item">
         <div class="agent-left">
           <div class="agent-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
               <path d="M16 14H8a4 4 0 0 0-4 4v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2a4 4 0 0 0-4-4z"/>
             </svg>
@@ -111,112 +106,119 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.view {
-  padding: var(--space-8);
-  max-width: 600px;
-}
-.page-head { margin-bottom: var(--space-6); }
-.page-title {
-  font-size: var(--font-lg);
-  font-weight: var(--font-semibold);
-  letter-spacing: -0.01em;
-}
-.page-sub {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
-}
+.connect-view { padding: 12px 16px 16px; }
 
 .card {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4);
-  margin-bottom: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
 }
-.status-card .status-row {
+.status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.label { font-size: var(--font-sm); font-weight: var(--font-medium); }
+.label { font-size: 13px; font-weight: 500; color: var(--ink2); }
 
 .badge {
-  font-size: var(--font-2xs);
-  font-weight: var(--font-medium);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
 }
 .badge-online {
-  background: color-mix(in srgb, var(--color-success) 15%, transparent);
-  color: var(--color-success);
+  background: rgba(70, 100, 79, 0.1);
+  color: var(--success);
 }
 .badge-offline {
-  background: color-mix(in srgb, var(--color-text-tertiary) 15%, transparent);
-  color: var(--color-text-tertiary);
+  background: var(--muted);
+  color: var(--ink3);
 }
 .badge-pending {
-  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
-  color: var(--color-warning);
+  background: rgba(118, 92, 61, 0.1);
+  color: var(--warning);
 }
 
 .offline-hint {
-  font-size: var(--font-xs); color: var(--color-text-tertiary);
-  margin: var(--space-3) 0 0 0;
+  font-size: 12px;
+  color: var(--ink3);
+  margin: 10px 0 0 0;
+  line-height: 1.5;
 }
 
 .btn {
-  height: 32px; padding: 0 var(--space-4);
-  font-size: var(--font-xs); font-weight: var(--font-medium);
-  border-radius: var(--radius-sm); cursor: pointer;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
   font-family: inherit;
-  transition: all var(--transition-fast);
-}
-.btn-primary {
-  margin-top: var(--space-3);
-  background: var(--color-signal); color: var(--color-bg);
+  transition: all 120ms ease;
   border: none;
 }
-.btn-primary:hover { opacity: 0.85; }
-.btn-secondary {
-  background: var(--color-bg-tertiary); color: var(--color-text);
-  border: 1px solid var(--color-border-soft);
+.btn-primary {
+  margin-top: 10px;
+  background: var(--signal);
+  color: var(--canvas);
 }
-.btn-secondary:hover { border-color: var(--color-border); }
+.btn-primary:hover { opacity: 0.9; }
+.btn-secondary {
+  background: var(--canvas);
+  color: var(--ink2);
+  border: 1px solid var(--line);
+}
+.btn-secondary:hover { border-color: var(--ink3); }
 .btn-secondary:disabled { opacity: 0.5; cursor: default; }
 .loading { opacity: 0.7; }
 
-.section-head { margin-bottom: var(--space-3); }
+.section-head { margin-bottom: 8px; }
 .section-title {
-  font-size: var(--font-sm); font-weight: var(--font-medium);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
 }
 
 .agent-list {
-  display: flex; flex-direction: column; gap: 1px;
-  background: var(--color-border-soft);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-md); overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--line-subtle);
+  gap: 1px;
 }
 .agent-item {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-bg-secondary);
+  padding: 10px 12px;
+  background: var(--surface);
 }
-.agent-left { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.agent-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .agent-icon {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--muted);
+  border-radius: 6px;
   flex-shrink: 0;
+  color: var(--ink3);
 }
-.agent-icon svg { color: var(--color-text-tertiary); }
-.agent-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.agent-name { font-size: var(--font-sm); font-weight: var(--font-medium); color: var(--color-text); }
-.agent-desc { font-size: var(--font-2xs); color: var(--color-text-tertiary); }
-.agent-right { display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0; }
+.agent-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agent-name { font-size: 12px; font-weight: 500; color: var(--ink); }
+.agent-desc { font-size: 11px; color: var(--ink3); }
+.agent-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .started-label {
-  font-size: var(--font-2xs); color: var(--color-success);
+  font-size: 11px;
+  color: var(--success);
 }
 </style>

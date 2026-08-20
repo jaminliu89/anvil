@@ -2,6 +2,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { Adapter, ExecutionResult } from './types'
+import { getToolStatus } from './health'
 
 export const codexAdapter: Adapter = {
   id: 'codex',
@@ -35,7 +36,12 @@ export const codexAdapter: Adapter = {
   render() { /* TimelineView 内联渲染 */ },
 
   async status() {
-    return { available: true, healthy: true, message: 'codex CLI' }
+    const s = await getToolStatus('codex')
+    if (s) {
+      return { available: s.available, healthy: s.healthy, message: s.message }
+    }
+    // bridge 不可用时降级：假设可用（交给 execute 时再报具体错）
+    return { available: true, healthy: true, message: 'codex CLI（状态待确认）' }
   },
 }
 

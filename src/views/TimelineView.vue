@@ -1,25 +1,390 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
+import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
+import { guessIntent, resolveCodeAdapter, getCodeFallbackChain, getFallbackChain } from '@/adapters/intent'
+import { getHealthyToolIds } from '@/adapters/health'
+import { useTaskQueueStore } from '@/stores/task-queue'
+import { useSettingsStore } from '@/stores/settings'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
-import { listConvs, saveConv, loadConv, deleteConv, newConvId } from '@/utils/conv-store'
-
+import { listConvs, saveConv, loadConv, newConvId } from '@/utils/conv-store'
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
+// 默认用 dsh（agent loop 是万能入口，能调度所有能力）
+const DEFAULT_ADAPTER = 'dsh'
+
 const entries = ref<TimelineEntry[]>([])
-const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || 'ling')
+const settingsStore = useSettingsStore()
+const advanced = computed(() => settingsStore.advancedMode)
+const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || DEFAULT_ADAPTER)
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
-const autoSearch = ref(localStorage.getItem('anvil.search') !== '0')  // 默认开
+const autoSearch = ref(localStorage.getItem('anvil.search') !== '0')
+
+const emit = defineEmits<{
+  openDrawer: [key: string]
+}>()
+
+// agent loop 推理流式累积区
+const reasoningRef = ref('')
 
 function persistAdapter(id: string) {
   currentAdapterId.value = id
   localStorage.setItem('anvil.adapter', id)
+}
+
+// ===== 任务调度：自动选 agent + 同步/异步分流 =====
+
+/** 走普通聊天（带搜索增强） */
+async function runChatWithAdapter(adapterId: string, text: string) {
+  const adapter = get(adapterId)
+  if (!adapter?.chat) return
+
+  let prompt = text
+  if (autoSearch.value) {
+    const context = await searchWeb(text)
+    if (context) {
+      addEntry('system', 'system', { content: '已搜索网络，正在整合结果...' })
+      prompt = `以下是联网搜索结果（供你参考，输出时用自然语言组织，必要时在句末标注来源）：\n${context}\n\n用户提问: ${text}`
+    }
+  }
+
+  const history = entries.value
+    .filter(e => e.type === 'message' && e.adapterId === adapterId)
+    .slice(0, -1)
+    .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+
+  try {
+    const result = await adapter.chat(history, prompt)
+    addEntry('message', adapterId, {
+      role: 'assistant', content: result.content, reasoning: result.reasoning,
+    })
+    persistConv()
+  } catch (e) {
+    addEntry('system', adapterId, { content: `错误: ${e}` })
+  }
+}
+
+/** 派发到异步编码 agent（dock / jules / 等）
+ *  创建 plan 类型卡片 + 启动状态轮询 + 完成后回填结果
+ */
+function dispatchAsyncTask(adapterId: string, text: string) {
+  const queue = useTaskQueueStore()
+  const adapter = get(adapterId)
+  if (!adapter) {
+    // 兜底 dsh
+    addEntry('system', 'system', { content: `${adapterId} 暂不可用，由 Agent Loop 接手` })
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+    return
+  }
+
+  // 创建异步任务卡片
+  addEntry('plan', adapterId, {
+    title: text.slice(0, 60),
+    content: text,
+    status: 'queued',
+    steps: [{ id: 's0', title: '排队中...', status: 'running' }],
+    sessionId: '',
+  })
+  const entryId = entries.value[entries.value.length - 1].id
+
+  // 派发 + 轮询
+  adapter.execute(adapter.commands?.[0] || adapterId, text).then(result => {
+    if (result.type === 'plan') {
+      // 从 result.data.status 或 result.approved 判断状态
+      const statusFromData = (result.data as Record<string, unknown> | undefined)?.status as string | undefined
+      const computedStatus = statusFromData ||
+        (result.steps?.some(s => s.status === 'running') ? 'running' :
+         result.approved ? 'running' : 'awaiting-approval')
+
+      updateEntryData(entryId, {
+        ...result,
+        status: computedStatus,
+        steps: result.steps?.map(s => ({ ...s, status: s.status || 'pending' })) || [],
+      })
+      // 启动进度轮询
+      if (result.sessionId) {
+        startTaskPolling(entryId, adapterId, result.sessionId)
+      }
+      // 注册到任务队列
+      queue.addOrUpdate({
+        id: entryId,
+        entryId,
+        adapterId,
+        title: (result.title as string) || '',
+        sessionId: result.sessionId || '',
+        status: computedStatus as any,
+        createdAt: Date.now(),
+        branch: result.branch as string | undefined,
+        approved: result.approved as boolean | undefined,
+      })
+    } else if (result.type === 'system') {
+      // 出错了
+      updateEntryData(entryId, { status: 'error', error: result.content })
+    } else {
+      updateEntryData(entryId, { ...result, status: 'done' })
+    }
+  }).catch(e => {
+    updateEntryData(entryId, {
+      status: 'error',
+      error: `派单失败: ${e}`,
+      steps: [{ id: 'err', title: '派单失败', status: 'failed' }],
+    })
+    // 失败兜底：转 dsh
+    addEntry('system', 'system', { content: `${adapter.name} 派单失败，由 Agent Loop 接手` })
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+  })
+}
+
+/** 统一调度入口 — 根据意图选最合适的执行方式
+ *  编码/研究/聊天 三类任务各有自己的降级链，挂了自动切下一个
+ */
+function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | null) {
+  const category = intent?.category || 'chat'
+
+  // 编码类任务 → 走编码降级链
+  if (category === 'code') {
+    const adapterId = resolveCodeAdapter(intent || null)
+    const adapter = get(adapterId)
+    const hasLoop = adapter?.capabilities?.some(c => c.type === 'agent-loop')
+    const isAsync = adapter?.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') && !hasLoop
+
+    if (isAsync) {
+      dispatchCodeWithFallback(adapterId, text)
+      busy.value = false
+      return
+    }
+    // dsh 或其他有 loop 的编码任务
+    if (hasLoop) {
+      addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+  }
+
+  // 研究/写作类任务 → 走研究降级链
+  if (category === 'research') {
+    const adapterId = intent?.adapterId || 'hermes'
+    dispatchResearchWithFallback(adapterId, text)
+    busy.value = false
+    return
+  }
+
+  // 聊天类任务 → 走聊天降级链
+  if (category === 'chat') {
+    dispatchChatWithFallback(text)
+    return
+  }
+
+  // 兜底：dsh agent loop
+  const fallback = get('dsh') || all()[0]
+  addEntry('system', 'system', { content: intent?.adapterName ? `${intent.adapterName} 暂不可用，由 Agent Loop 接手` : '正在处理...' })
+  addEntry('agent-loop', fallback.id, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+  const loopId = entries.value[entries.value.length - 1].id
+  startAgentLoop(text, loopId)
+}
+
+/**
+ * 编码任务带降级的派发。
+ * 从当前 adapter 开始，按降级链逐个尝试，第一个成功的就是最终结果。
+ * 用户只看到结果，不感知切换了几个。
+ */
+async function dispatchCodeWithFallback(firstAdapterId: string, text: string) {
+  // 先拉真实健康状态，过滤掉不可用的
+  const healthyIds = await getHealthyToolIds()
+  const chain = getCodeFallbackChain()
+
+  // 过滤：注册了 + 健康的（健康检查没拉到就全保留，让 execute 时再报）
+  let tryChain = chain.filter(id => {
+    const adapter = get(id)
+    if (!adapter) return false
+    // dsh 不走 tool status，单独判断
+    if (id === 'dsh') return true
+    if (healthyIds.length > 0) {
+      return healthyIds.includes(id)
+    }
+    return true
+  })
+
+  if (tryChain.length === 0) tryChain = ['dsh']
+
+  // 从用户指定的那个开始
+  const startIdx = Math.max(0, tryChain.indexOf(firstAdapterId))
+  tryChain = tryChain.slice(startIdx)
+
+  // 如果只有 dsh 兜底，直接走 agent loop 模式
+  if (tryChain.length === 0 || (tryChain.length === 1 && tryChain[0] === 'dsh')) {
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+    return
+  }
+
+  // 先创建任务卡片
+  addEntry('plan', tryChain[0], {
+    title: text.slice(0, 60),
+    content: text,
+    status: 'running',
+    steps: [{ id: 's0', title: '执行中...', status: 'running' }],
+    sessionId: '',
+  })
+  const entryId = entries.value[entries.value.length - 1].id
+
+  // 逐个尝试
+  let tryIndex = 0
+  function tryNext() {
+    if (tryIndex >= tryChain.length) {
+      // 全挂了，兜底 agent loop
+      updateEntryData(entryId, {
+        status: 'error',
+        error: '所有编码 agent 都不可用，改由 Agent Loop 处理',
+        steps: [{ id: 'err', title: '全部不可用', status: 'failed' }],
+      })
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    const adapterId = tryChain[tryIndex]
+    const adapter = get(adapterId)
+    if (!adapter) { tryIndex++; tryNext(); return }
+
+    // dsh 兜底走 agent loop
+    if (adapterId === 'dsh') {
+      updateEntryData(entryId, {
+        status: 'done',
+        steps: [{ id: 'done', title: '已转 Agent Loop', status: 'done' }],
+      })
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    // 同步编码执行（codex/pi 都是 execute 方法，同步返回结果）
+    adapter.execute(adapter.commands?.[0] || adapterId, text).then(result => {
+      if (result.type === 'system') {
+        // system 类型 = 失败/报错，试下一个
+        tryIndex++
+        tryNext()
+      } else {
+        // 成功了
+        updateEntryData(entryId, {
+          ...result,
+          adapterId,
+          status: 'done',
+          steps: [{ id: 'done', title: '完成', status: 'done' }],
+        })
+        // 注册到任务队列
+        const queue = useTaskQueueStore()
+        queue.addOrUpdate({
+          id: entryId,
+          entryId,
+          adapterId,
+          title: text.slice(0, 30),
+          sessionId: '',
+          status: 'done',
+          createdAt: Date.now(),
+        })
+      }
+    }).catch(() => {
+      tryIndex++
+      tryNext()
+    })
+  }
+
+  tryNext()
+}
+
+/**
+ * 研究/写作任务带降级的派发。
+ * Hermes → dsh agent loop
+ */
+async function dispatchResearchWithFallback(firstAdapterId: string, text: string) {
+  const healthyIds = await getHealthyToolIds()
+  const chain = getFallbackChain('research')
+
+  let tryChain = chain.filter(id => {
+    const adapter = get(id)
+    if (!adapter) return false
+    if (id === 'dsh') return true
+    if (healthyIds.length > 0) return healthyIds.includes(id)
+    return true
+  })
+  if (tryChain.length === 0) tryChain = ['dsh']
+
+  const startIdx = Math.max(0, tryChain.indexOf(firstAdapterId))
+  tryChain = tryChain.slice(startIdx)
+
+  // 逐个尝试
+  for (const adapterId of tryChain) {
+    const adapter = get(adapterId)
+    if (!adapter) continue
+
+    // dsh 走 agent loop
+    if (adapterId === 'dsh') {
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    // hermes 有 execute 能力 → 走异步派发
+    if (adapter.capabilities?.some(c => c.type === 'plan' || c.type === 'execute')) {
+      dispatchAsyncTask(adapterId, text)
+      busy.value = false
+      return
+    }
+
+    // 有 chat 能力的走聊天
+    if (adapter.chat) {
+      await runChatWithAdapter(adapterId, text)
+      busy.value = false
+      return
+    }
+  }
+
+  // 全挂了 → dsh 兜底
+  addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+  const loopId = entries.value[entries.value.length - 1].id
+  startAgentLoop(text, loopId)
+}
+
+/**
+ * 聊天任务降级：dsh → ling（本地模型兜底）
+ * 搜索增强也跟着降级（ling 本地模型不支持联网）。
+ */
+async function dispatchChatWithFallback(text: string) {
+  const chain = getFallbackChain('chat')
+
+  for (const adapterId of chain) {
+    const adapter = get(adapterId)
+    if (!adapter?.chat) continue
+
+    try {
+      await runChatWithAdapter(adapterId, text)
+      busy.value = false
+      return
+    } catch {
+      // 这个挂了，试下一个
+      continue
+    }
+  }
+
+  // 全挂了
+  addEntry('system', 'system', { content: '所有聊天通道都不可用。请检查模型连接。' })
+  busy.value = false
 }
 
 const convId = ref(localStorage.getItem('anvil.conv.current') || newConvId())
@@ -38,12 +403,6 @@ function switchConv(id: string) {
     entries.value = loaded
     localStorage.setItem('anvil.conv.current', id)
   }
-}
-
-function removeConv(id: string) {
-  deleteConv(id)
-  convList.value = listConvs()
-  if (convId.value === id) startNewConv()
 }
 
 function persistConv() {
@@ -112,44 +471,78 @@ async function approvePlan(entry: TimelineEntry) {
   busy.value = false
 }
 
+// 本地编码审批 — 合并沙箱分支
+async function approveLocalCoding(entry: TimelineEntry) {
+  const branch = entry.data.branch as string
+  if (!branch) return
+  busy.value = true
+  addEntry('system', 'local-coding', { content: `合并分支 ${branch}...` })
+  try {
+    const adapter = get('local-coding')
+    if (adapter) {
+      const r = await adapter.execute('local', `approve ${branch}`)
+      addEntry(r.type, 'local-coding', r as unknown as Record<string, unknown>)
+      // 更新原 entry 状态
+      entry.data.status = 'approved'
+      entry.data.approved = true
+    }
+  } catch (e) {
+    addEntry('system', 'local-coding', { content: `合并失败: ${e}` })
+  }
+  busy.value = false
+}
+
+// 本地编码审批 — 丢弃沙箱分支
+async function discardLocalCoding(entry: TimelineEntry) {
+  const branch = entry.data.branch as string
+  if (!branch) return
+  busy.value = true
+  addEntry('system', 'local-coding', { content: `丢弃分支 ${branch}...` })
+  try {
+    const adapter = get('local-coding')
+    if (adapter) {
+      const r = await adapter.execute('local', `discard ${branch}`)
+      addEntry(r.type, 'local-coding', r as unknown as Record<string, unknown>)
+      entry.data.status = 'discarded'
+    }
+  } catch (e) {
+    addEntry('system', 'local-coding', { content: `丢弃失败: ${e}` })
+  }
+  busy.value = false
+}
+
 async function handleSubmit(parsed: Parsed) {
   if (busy.value) return
   busy.value = true
 
   if (parsed.type === 'chat') {
     if (!parsed.text) { busy.value = false; return }
-    addEntry('message', currentAdapterId.value, { role: 'user', content: parsed.text })
+
+    // 1. 猜意图
+    const availableIds = all().map(a => a.id)
+    const intent = guessIntent(parsed.text, availableIds)
+
+    // 2. 系统操作：打开抽屉
+    if (intent?.action === 'open_drawer' && intent.drawer) {
+      addEntry('message', 'system', { role: 'user', content: parsed.text })
+      const noun = intent.reason.replace('打开', '').replace('管理', '').replace('查看', '').replace('启动', '')
+      addEntry('system', 'system', { content: `好的，打开${noun}。` })
+      emit('openDrawer', intent.drawer)
+      persistConv()
+      busy.value = false
+      return
+    }
+
+    // 3. 用户消息 + 自动调度
+    const displayAdapter = intent?.adapterId && intent.adapterId !== 'system'
+      ? intent.adapterId
+      : DEFAULT_ADAPTER
+    addEntry('message', displayAdapter, { role: 'user', content: parsed.text })
     persistConv()
 
-    let prompt = parsed.text
-    if (autoSearch.value) {
-      const context = await searchWeb(parsed.text)
-      if (context) {
-        addEntry('system', 'system', { content: '🔍 已搜索网络，正在整合结果...' })
-        prompt = `以下是联网搜索结果（供你参考，输出时用自然语言组织，必要时在句末标注来源）：\n${context}\n\n用户提问: ${parsed.text}`
-      }
-    }
-
-    const adapter = get(currentAdapterId.value)
-    if (adapter?.chat) {
-      const history = entries.value
-        .filter(e => e.type === 'message' && e.adapterId === currentAdapterId.value)
-        .slice(0, -1)
-        .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
-
-      try {
-        const result = await adapter.chat(history, prompt)
-        addEntry('message', currentAdapterId.value, {
-          role: 'assistant', content: result.content, reasoning: result.reasoning,
-        })
-        persistConv()
-      } catch (e) {
-        addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
-      }
-    } else {
-      addEntry('system', currentAdapterId.value, { content: '当前适配器不支持聊天。输入 /switch <name> 切换。' })
-    }
-    busy.value = false
+    // 4. 派任务（同步/异步自动分流，失败自动兜底）
+    dispatchTask(parsed.text, intent)
+    // 注意：busy 的释放在各执行路径里自己处理
     return
   }
 
@@ -160,6 +553,38 @@ async function handleSubmit(parsed: Parsed) {
   }
 
   if (parsed.type === 'builtin') {
+    // 意图选择器触发的：切换 adapter 后发送聊天
+    if (parsed.command === 'switch_and_chat') {
+      const [adapterId, text] = (parsed.args as string).split(':::')
+      const target = get(adapterId)
+      if (target && text) {
+        persistAdapter(adapterId)
+        // 直接走聊天逻辑
+        addEntry('message', adapterId, { role: 'user', content: text })
+        persistConv()
+
+        if (target.chat) {
+          const history = entries.value
+            .filter(e => e.type === 'message' && e.adapterId === adapterId)
+            .slice(0, -1)
+            .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+          try {
+            const result = await target.chat(history, text)
+            addEntry('message', adapterId, {
+              role: 'assistant', content: result.content, reasoning: result.reasoning,
+            })
+            persistConv()
+          } catch (e) {
+            addEntry('system', adapterId, { content: `错误: ${e}` })
+          }
+        } else {
+          addEntry('system', adapterId, { content: '当前适配器不支持聊天。' })
+        }
+      }
+      busy.value = false
+      return
+    }
+
     if (parsed.command === 'switch') {
       const targetId = parsed.args
       if (!targetId) {
@@ -173,7 +598,6 @@ async function handleSubmit(parsed: Parsed) {
         persistAdapter(targetId)
         addEntry('system', targetId, { content: `已切换到 ${target.name}` })
         persistConv()
-        // 同步切 bridge 推理端点（ling/ollama/lmstudio）
         try {
           const r = await fetch(`${BRIDGE}/target`, {
             method: 'POST',
@@ -183,7 +607,7 @@ async function handleSubmit(parsed: Parsed) {
           })
           const j = await r.json()
           if (j.ok) addEntry('system', 'system', { content: `推理端点 → ${j.switched} (${j.model || 'auto'})` })
-        } catch { /* bridge 不在或非推理适配器，静默 */ }
+        } catch { /* bridge not running, silent */ }
       } else {
         const names = all().map(a => a.id).join(', ')
         addEntry('system', 'system', { content: `未知适配器: ${targetId}。可用: ${names}` })
@@ -199,10 +623,92 @@ async function handleSubmit(parsed: Parsed) {
     const result = await parsed.adapter.execute(parsed.command, parsed.args)
     addEntry(result.type, parsed.adapter.id, result as unknown as Record<string, unknown>)
     persistConv()
+
+    if (result.type === 'agent-loop') {
+      const entryId = entries.value[entries.value.length - 1].id
+      startAgentLoop(result.content as string, entryId)
+    }
   } catch (e) {
     addEntry('system', parsed.adapter.id, { content: `错误: ${e}` })
+    busy.value = false
   }
-  busy.value = false
+  if (parsed.adapter.id !== 'dsh') {
+    busy.value = false
+  }
+}
+
+// ---- Agent Loop 流式执行 ----
+function updateEntryData(id: string, patch: Record<string, unknown>) {
+  const idx = entries.value.findIndex(e => e.id === id)
+  if (idx >= 0) {
+    entries.value[idx] = {
+      ...entries.value[idx],
+      data: { ...entries.value[idx].data, ...patch },
+    }
+  }
+}
+
+function startAgentLoop(prompt: string, entryId: string) {
+  const steps: AgentLoopStep[] = []
+  let answerContent = ''
+
+  reasoningRef.value = ''
+
+  updateEntryData(entryId, {
+    steps,
+    status: 'running',
+    answer: '',
+    reasoning: '',
+  })
+
+  runAgentLoopStream(prompt, {
+    onStepStart: (step) => {
+      steps.push({ ...step })
+      updateEntryData(entryId, { steps: [...steps], status: 'running' })
+    },
+    onStepUpdate: (stepId, content) => {
+      const s = steps.find(s => s.id === stepId)
+      if (s) {
+        if (stepId === 'answer') {
+          answerContent += content
+          updateEntryData(entryId, { answer: answerContent })
+        } else {
+          s.content = (s.content || '') + content
+          updateEntryData(entryId, { steps: [...steps] })
+        }
+      }
+    },
+    onStepReasoning: (_stepId, content) => {
+      reasoningRef.value += content
+      updateEntryData(entryId, { reasoning: reasoningRef.value })
+    },
+    onStepDone: (stepId, status, result) => {
+      const s = steps.find(s => s.id === stepId)
+      if (s) {
+        s.status = status as AgentLoopStep['status']
+        s.result = result
+        updateEntryData(entryId, { steps: [...steps] })
+      }
+    },
+    onFinal: (content, meta) => {
+      updateEntryData(entryId, {
+        status: 'done',
+        answer: content,
+        stepsCount: meta.steps,
+        usedSearch: meta.usedSearch,
+        reasoning: meta.reasoning || reasoningRef.value,
+      })
+      busy.value = false
+      reasoningRef.value = ''
+      persistConv()
+    },
+    onError: (message) => {
+      updateEntryData(entryId, { status: 'error', error: message })
+      busy.value = false
+      reasoningRef.value = ''
+      persistConv()
+    },
+  }, { search: autoSearch.value })
 }
 const targetStatus = ref<Record<string, boolean>>({})
 
@@ -214,145 +720,1371 @@ async function refreshTargetStatus() {
   } catch {}
 }
 
-onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
+// 直接发送一条消息（空状态建议卡片点击用）
+function quickSend(text: string) {
+  if (busy.value) return
+  busy.value = true
+
+  addEntry('message', currentAdapterId.value, { role: 'user', content: text })
+  persistConv()
+
+  const adapter = get(currentAdapterId.value)
+  if (adapter?.chat) {
+    const history = entries.value
+      .filter(e => e.type === 'message' && e.adapterId === currentAdapterId.value)
+      .slice(0, -1)
+      .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+    try {
+      adapter.chat(history, text).then(result => {
+        addEntry('message', currentAdapterId.value, {
+          role: 'assistant', content: result.content, reasoning: result.reasoning,
+        })
+        persistConv()
+        busy.value = false
+      })
+    } catch (e) {
+      addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
+      busy.value = false
+    }
+  } else {
+    addEntry('system', currentAdapterId.value, { content: '当前适配器不支持聊天。' })
+    busy.value = false
+  }
+}
+
+onMounted(() => {
+  registerAllAdapters()
+  refreshTargetStatus()
+  // 预热工具状态（后台拉，不阻塞界面）
+  getHealthyToolIds().catch(() => {})
+})
+
+// 暴露给父组件
+defineExpose({
+  loadConv: switchConv,
+  newConversation: startNewConv,
+})
+
+// 根据 entry 类型返回节点样式类
+function getDotClass(entry: TimelineEntry): string {
+  if (entry.type === 'message' && entry.data.role === 'user') return 'user'
+  if (entry.type === 'system') return 'system'
+  if (entry.type === 'agent-loop') {
+    const status = entry.data.status as string
+    return `loop ${status || ''}`
+  }
+  return 'agent'
+}
+
+// 判断系统消息是否是错误/失败类
+function isSystemError(entry: TimelineEntry): boolean {
+  const content = String(entry.data.content || '')
+  const errorPatterns = ['错误', '失败', '不支持', '未启动', '未就绪', '不行', '无法', '拒绝']
+  return errorPatterns.some(p => content.includes(p))
+}
+
+// 异步任务状态显示文案
+function taskStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    'queued': '排队中',
+    'running': '执行中',
+    'awaiting-approval': '待审批',
+    'done': '已完成',
+    'failed': '失败',
+    'error': '错误',
+    'pending': '等待中',
+    'approved': '已批准',
+  }
+  return map[status] || status || '等待中'
+}
+
+// 查看任务日志（简单版：弹系统消息）
+function viewTaskLog(entry: TimelineEntry) {
+  const sid = entry.data.sessionId as string
+  if (!sid) return
+  const adapter = get(entry.adapterId)
+  if (!adapter) return
+  adapter.execute('log', sid).then(result => {
+    addEntry(result.type, entry.adapterId, result as unknown as Record<string, unknown>)
+    persistConv()
+  })
+}
+
+// ===== 异步任务进度轮询 =====
+const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+function startTaskPolling(entryId: string, adapterId: string, sessionId: string) {
+  const queue = useTaskQueueStore()
+  if (!sessionId || pollTimers.has(entryId)) return
+
+  const interval = setInterval(async () => {
+    try {
+      let state: string | undefined
+      let steps: any[] | undefined
+
+      if (adapterId === 'dock') {
+        const res = await fetch(`http://127.0.0.1:8710/api/sessions/${sessionId}/activities`, {
+          signal: AbortSignal.timeout(5000)
+        })
+        if (res.ok) {
+          const acts = await res.json()
+          const doneAct = acts.find((a: any) => a.kind === 'executionComplete')
+          const planAct = acts.find((a: any) => a.kind === 'planReady')
+          if (doneAct) { state = 'done'; steps = [{ id: 's0', title: '执行完成', status: 'done' }] }
+          else if (planAct) { state = 'awaiting-approval'; steps = (planAct.text || '').split('\n').filter(Boolean).map((s: string, i: number) => ({ id: `s${i}`, title: s, status: 'pending' })) }
+          else { state = 'running' }
+        }
+      } else {
+        const res = await fetch(`http://127.0.0.1:18443/${adapterId}/status/${sessionId}`, {
+          signal: AbortSignal.timeout(5000)
+        })
+        if (res.ok) {
+          const task = await res.json()
+          state = task.state
+          steps = task.steps
+        }
+      }
+
+      if (state) {
+        updateEntryData(entryId, { status: state, steps: steps || [] })
+        // 更新任务队列中的状态
+        const task = entries.value.find(e => e.id === entryId)
+        if (task) {
+          queue.addOrUpdate({
+            id: entryId,
+            entryId,
+            adapterId: task.adapterId,
+            title: (task.data.title as string) || '',
+            sessionId: (task.data.sessionId as string) || '',
+            status: state as any,
+            createdAt: (task.data.createdAt as number) || Date.now(),
+          })
+        }
+      }
+
+      if (state === 'done' || state === 'failed' || state === 'error') {
+        stopTaskPolling(entryId)
+        persistConv()
+      }
+    } catch { /* retry next tick */ }
+  }, 10000)
+
+  pollTimers.set(entryId, interval)
+}
+
+function stopTaskPolling(entryId: string) {
+  const timer = pollTimers.get(entryId)
+  if (timer) { clearInterval(timer); pollTimers.delete(entryId) }
+}
+
+import { onUnmounted } from 'vue'
+onUnmounted(() => {
+  for (const timer of pollTimers.values()) { clearInterval(timer) }
+  pollTimers.clear()
+})
+
 </script>
 
 <template>
   <div class="timeline-view">
-    <div class="messages" ref="messagesEl">
+    <div class="timeline-container" ref="messagesEl">
+      <!-- 背景时间轴竖线 -->
+      <div class="timeline-rail"></div>
+
       <div v-if="entries.length === 0" class="empty-state">
-        <div class="empty-title">Anvil</div>
-        <div class="empty-sub">打字聊天，斜杠调工具。/switch [id] 切换聊天引擎。</div>
-        <div class="empty-hints">
-          <div class="hint-text">帮我重构这个工具函数 → 起一个异步编码任务</div>
-          <div class="hint-text">/switch ling → 切换聊天引擎到 Ling</div>
-          <div class="hint-text">🌐 点联网搜索 → 每次提问自动搜索网络</div>
+        <div class="empty-brand">Anvil</div>
+        <div class="empty-desc">告诉我你想做什么，我来选工具。</div>
+        <div class="empty-suggestions">
+          <button class="suggestion-chip" @click="quickSend('帮我分析一下最近的 AI 新闻')">
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span class="chip-text">帮我分析一下最近的 AI 新闻</span>
+          </button>
+          <button class="suggestion-chip" @click="quickSend('用 Python 写一个快速排序')">
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6"></polyline>
+              <polyline points="8 6 2 12 8 18"></polyline>
+            </svg>
+            <span class="chip-text">用 Python 写一个快速排序</span>
+          </button>
+          <button class="suggestion-chip" @click="quickSend('查一下今天的天气')">
+            <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <span class="chip-text">查一下今天的天气</span>
+          </button>
         </div>
       </div>
 
-      <div v-for="entry in entries" :key="entry.id" class="entry"
-           :class="[entry.type === 'message' && entry.data.role === 'user' ? 'entry-right' : 'entry-left']">
+      <!-- Entry 列表 -->
+      <div
+        v-for="entry in entries"
+        :key="entry.id"
+        class="tl-entry"
+        :class="{
+          'tl-entry--user': entry.type === 'message' && entry.data.role === 'user',
+          'tl-entry--system': entry.type === 'system',
+          'tl-entry--agent-loop': entry.type === 'agent-loop',
+        }"
+      >
+        <!-- 时间轴节点 -->
+        <div class="tl-dot" :class="getDotClass(entry)"></div>
 
-        <div v-if="entry.type === 'system'" class="system-msg">{{ entry.data.content }}</div>
-
-        <div v-else-if="entry.type === 'message'" class="bubble"
-             :class="entry.data.role === 'user' ? 'bubble-user' : 'bubble-agent'">
-          <div v-if="entry.data.role !== 'user'" class="model-label">{{ entry.adapterId }}</div>
-          <div v-if="entry.data.reasoning && entry.data.role !== 'user'"
-               class="think-toggle"
-               @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('visible')">
-            展开思考</div>
-          <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
-          <div class="message-row">
-            <div v-if="entry.data.role === 'user'" class="content">{{ entry.data.content }}</div>
-            <div v-else class="content" v-html="markdownToHtml(entry.data.content as string)"></div>
-            <div v-if="entry.data.role === 'user'" class="user-avatar">{{ (entry.data.content as string).charAt(0).toUpperCase() }}</div>
+        <!-- 内容区 -->
+        <div class="tl-content">
+          <!-- 系统消息 -->
+          <div v-if="entry.type === 'system'" class="system-text"
+               :class="{ 'is-error': isSystemError(entry) }">
+            <span class="system-adapter">{{ entry.adapterId }}</span>
+            <span class="system-content">{{ entry.data.content as string }}</span>
           </div>
-        </div>
 
-        <div v-else-if="entry.type === 'plan'" class="plan-card">
-          <div v-if="entry.data.title" class="plan-title">{{ entry.data.title }}</div>
-          <div v-if="entry.data.sessionId" class="plan-meta">session {{ String(entry.data.sessionId).slice(0, 14) }} · 分支 {{ entry.data.branch }}</div>
-          <div v-if="entry.data.steps" class="plan-steps">
-            <div v-for="step in (entry.data.steps as { id: string; title: string; status: string }[])" :key="step.id" class="plan-step">
-              <span class="step-status" :class="step.status"></span>
-              <span>{{ step.title }}</span>
+          <!-- 普通消息气泡 -->
+          <div v-else-if="entry.type === 'message'" class="bubble"
+               :class="entry.data.role === 'user' ? 'bubble--user' : 'bubble--agent'">
+            <div v-if="entry.data.role !== 'user'" class="bubble-meta">
+              <span class="adapter-name">{{ entry.adapterId }}</span>
+            </div>
+            <div v-if="entry.data.reasoning && entry.data.role !== 'user'" class="reasoning-block">
+              <div class="reasoning-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                思考过程
+              </div>
+              <div class="reasoning-body" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+            </div>
+            <div class="bubble-content" v-html="markdownToHtml(entry.data.content as string)"></div>
+          </div>
+
+          <!-- 异步任务卡片（plan/execution/异步任务） -->
+          <div v-else-if="entry.type === 'plan'" class="async-task-card"
+               :class="String(entry.data.status || 'pending')">
+            <div class="task-header">
+              <span class="task-adapter">{{ entry.adapterId }}</span>
+              <span class="task-status" :class="String(entry.data.status || 'pending')">
+                {{ taskStatusLabel(entry.data.status as string) }}
+              </span>
+            </div>
+            <div v-if="entry.data.title" class="task-title">{{ entry.data.title as string }}</div>
+            <div v-if="entry.data.sessionId" class="task-meta">
+              session {{ String(entry.data.sessionId).slice(0, 14) }}
+              <span v-if="entry.data.branch"> · 分支 {{ entry.data.branch }}</span>
+            </div>
+            <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="task-steps">
+              <div v-for="(step, idx) in (entry.data.steps as any[])"
+                   :key="step.id" class="task-step" :class="step.status">
+                <div class="step-rail">
+                  <span class="step-dot" :class="step.status"></span>
+                  <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
+                </div>
+                <div class="step-body">
+                  <div class="step-header">
+                    <div class="step-title">{{ step.title }}</div>
+                    <span v-if="step.agent" class="step-agent">{{ step.agent }}</span>
+                  </div>
+                  <div v-if="step.content" class="step-content">{{ step.content }}</div>
+                  <!-- 子步骤 -->
+                  <div v-if="step.subSteps && (step.subSteps as unknown[]).length" class="sub-steps">
+                    <div v-for="(sub, sidx) in (step.subSteps as any[])"
+                         :key="sub.id"
+                         class="sub-step"
+                         :class="sub.status">
+                      <div class="sub-rail">
+                        <span class="sub-dot" :class="sub.status"></span>
+                        <span v-if="sidx < (step.subSteps as unknown[]).length - 1" class="sub-line"></span>
+                      </div>
+                      <div class="sub-body">
+                        <div class="sub-title">
+                          {{ sub.title }}
+                          <span v-if="sub.agent" class="sub-agent">{{ sub.agent }}</span>
+                        </div>
+                        <div v-if="sub.content" class="sub-content">{{ sub.content }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="entry.data.error" class="task-error">
+              {{ entry.data.error as string }}
+            </div>
+            <div class="task-actions">
+              <button v-if="entry.data.status === 'awaiting-approval' && entry.data.sessionId"
+                      class="approve-btn"
+                      @click="approvePlan(entry)">
+                批准执行
+              </button>
+              <button v-if="entry.data.status === 'done' && entry.data.sessionId"
+                      class="secondary-btn"
+                      @click="viewTaskLog(entry)">
+                查看日志
+              </button>
             </div>
           </div>
-          <button v-if="entry.data.sessionId && !entry.data.approved" class="approve-btn" @click="entry.data.approved = true; approvePlan(entry)">
-            批准执行
-          </button>
-          <div v-else-if="entry.data.approved" class="plan-approved">已批准，执行中</div>
+
+          <!-- Agent Loop 任务卡（无框，时间轴式） -->
+          <div v-else-if="entry.type === 'agent-loop'" class="loop-block">
+            <div class="loop-header">
+              <span class="loop-adapter">{{ entry.adapterId }}</span>
+              <span class="loop-status" :class="String(entry.data.status)">
+                {{ entry.data.status === 'running' ? '运行中' :
+                   entry.data.status === 'done' ? '完成' :
+                   entry.data.status === 'error' ? '错误' : '...' }}
+              </span>
+            </div>
+
+            <!-- 步骤时间轴 -->
+            <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="loop-steps">
+              <div v-for="(step, idx) in (entry.data.steps as any[])"
+                   :key="step.id"
+                   class="loop-step"
+                   :class="[step.status, { 'has-agent': step.agent }]">
+                <div class="step-rail">
+                  <span class="step-dot" :class="step.status"></span>
+                  <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
+                </div>
+                <div class="step-body">
+                  <div class="step-header">
+                    <div class="step-title">{{ step.title }}</div>
+                    <span v-if="step.agent" class="step-agent">{{ step.agent }}</span>
+                  </div>
+                  <div v-if="step.content && step.id !== 'answer'" class="step-content">
+                    {{ step.content }}
+                  </div>
+                  <div v-if="step.result && typeof step.result === 'string'" class="step-result">
+                    {{ step.result }}
+                  </div>
+                  <!-- 子步骤（第二层） -->
+                  <div v-if="step.subSteps && (step.subSteps as unknown[]).length" class="sub-steps">
+                    <div v-for="(sub, sidx) in (step.subSteps as any[])"
+                         :key="sub.id"
+                         class="sub-step"
+                         :class="sub.status">
+                      <div class="sub-rail">
+                        <span class="sub-dot" :class="sub.status"></span>
+                        <span v-if="sidx < (step.subSteps as unknown[]).length - 1" class="sub-line"></span>
+                      </div>
+                      <div class="sub-body">
+                        <div class="sub-title">
+                          {{ sub.title }}
+                          <span v-if="sub.agent" class="sub-agent">{{ sub.agent }}</span>
+                        </div>
+                        <div v-if="sub.content" class="sub-content">{{ sub.content }}</div>
+                        <div v-if="sub.result && typeof sub.result === 'string'" class="sub-result">{{ sub.result }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- reasoning 折叠 -->
+            <div v-if="entry.data.reasoning" class="loop-reasoning">
+              <div class="reasoning-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                思考过程
+              </div>
+              <div class="reasoning-body" v-html="markdownToHtml(entry.data.reasoning as string)"></div>
+            </div>
+
+            <!-- 最终回答 -->
+            <div v-if="entry.data.answer" class="loop-answer">
+              <div class="answer-label">最终回答</div>
+              <div class="answer-body" v-html="markdownToHtml(entry.data.answer as string)"></div>
+            </div>
+
+            <!-- 错误 -->
+            <div v-if="entry.data.status === 'error' && entry.data.error" class="loop-error">
+              {{ entry.data.error as string }}
+            </div>
+          </div>
+
+          <!-- 训练消息 -->
+          <div v-else-if="entry.type === 'train'" class="train-text">
+            {{ entry.data.content as string }}
+          </div>
+
+          <!-- 本地编码审批卡（diff + 合/弃按钮） -->
+          <div v-else-if="entry.type === 'approval'" class="approval-card"
+               :class="String(entry.data.status || 'awaiting-approval')">
+            <div class="task-header">
+              <span class="task-adapter">{{ entry.adapterId }}</span>
+              <span class="task-status" :class="String(entry.data.status || 'awaiting-approval')">
+                {{ entry.data.status === 'approved' ? '已合并' :
+                   entry.data.status === 'discarded' ? '已丢弃' :
+                   '待审批' }}
+              </span>
+            </div>
+            <div v-if="entry.data.title" class="task-title">{{ entry.data.title as string }}</div>
+            <div v-if="entry.data.branch" class="task-meta">
+              分支 {{ entry.data.branch }}
+              <span v-if="entry.data.fileCount"> · {{ entry.data.fileCount }} 个文件</span>
+            </div>
+            <!-- diff 折叠区 -->
+            <div v-if="entry.data.content" class="diff-block">
+              <div class="diff-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                查看改动
+              </div>
+              <pre class="diff-body"><code>{{ entry.data.content as string }}</code></pre>
+            </div>
+            <!-- 操作按钮 -->
+            <div v-if="entry.data.status === 'awaiting-approval'" class="task-actions">
+              <button class="approve-btn" @click="approveLocalCoding(entry)">
+                合并到当前分支
+              </button>
+              <button class="secondary-btn" @click="discardLocalCoding(entry)">
+                丢弃改动
+              </button>
+            </div>
+          </div>
+
+          <!-- 其他执行消息 -->
+          <div v-else class="exec-text">
+            {{ entry.data.content as string }}
+          </div>
         </div>
-
-        <div v-else-if="entry.type === 'train'" class="train-msg">{{ entry.data.content }}</div>
-
-        <div v-else class="exec-msg">{{ entry.data.content }}</div>
       </div>
     </div>
 
-    <div class="search-toggle">
-      <button class="search-btn" @click="startNewConv">+ 新对话</button>
-      <select class="conv-select" @change="switchConv(($event.target as HTMLSelectElement).value)">
-        <option value="" disabled selected>历史对话 ({{ convList.length }})</option>
-        <option v-for="c in convList" :key="c.id" :value="c.id">
-          {{ c.title }} · {{ new Date(c.updatedAt).toLocaleDateString() }}
-        </option>
-      </select>
-      <button v-if="convList.length" class="search-btn" @click="removeConv(convId)">删除当前</button>
-      <button class="search-btn" :class="{ active: autoSearch }" @click="toggleSearch()">
-        联网搜索
-      </button>
-      <span class="search-hint">{{ autoSearch ? '已开启' : '已关闭' }}</span>
-    </div>
-    <CommandBar @submit="handleSubmit" />
+    <CommandBar :auto-search="autoSearch" :advanced-mode="advanced" @toggle-search="toggleSearch" @submit="handleSubmit" />
   </div>
 </template>
 
 <style scoped>
-.timeline-view { display: flex; flex-direction: column; height: 100%; }
-.messages { flex: 1; overflow-y: auto; padding: 24px; }
-.empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-.empty-title { font-size: 18px; font-weight: 600; color: var(--ink); }
-.empty-sub { font-size: 13px; color: var(--ink3); }
-.entry { margin-bottom: 16px; max-width: 78%; width: fit-content; min-width: 160px; }
-.entry-left { margin-right: auto; }
-.entry-right { margin-left: auto; }
-.bubble { border-radius: 12px; padding: 10px 14px; font-size: 14px; line-height: 1.65; width: fit-content; }
-.bubble-user { background: var(--signal); color: var(--canvas); }
-.dark .bubble-user, [data-theme="dark"] .bubble-user { background: #D4D4D4; color: #141415; }
-.bubble-agent { background: var(--surface); border: 1px solid var(--line); color: var(--ink2); }
-.think-toggle { font-size: 12px; color: var(--ink4); cursor: pointer; user-select: none; border-bottom: 1px dashed var(--ink4); display: inline-block; margin-bottom: 4px; padding-bottom: 1px; }
-.reasoning { display: none; font-size: 12px; color: var(--ink3); background: var(--signalSoft); border-radius: 8px; padding: 10px 12px; margin: 6px 0; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
-.reasoning.visible { display: block; }
-.content { white-space: pre-wrap; word-break: break-word; }
-.system-msg { text-align: center; font-size: 12px; color: var(--ink3); margin: 12px 0; font-family: var(--mono); }
-.exec-msg { font-family: var(--mono); font-size: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 8px 0; }
-.train-msg { font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.plan-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-.plan-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; color: var(--ink); }
-.plan-meta { font-size: 11px; color: var(--ink4); font-family: var(--mono); margin-bottom: 12px; }
-.plan-steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.plan-step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink2); }
-.step-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.step-status.pending { background: var(--ink4); }
-.step-status.approved { background: var(--success); }
-.step-status.done { background: var(--success); }
-.step-status.running { background: var(--warning); }
-.approve-btn { padding: 6px 16px; background: var(--signal); color: var(--canvas); border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; margin-top: 12px; }
+.timeline-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--canvas);
+}
+
+/* ── 时间轴容器 ── */
+.timeline-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0 24px 0;
+  position: relative;
+  scroll-behavior: smooth;
+}
+
+/* 背景竖线 */
+.timeline-rail {
+  position: absolute;
+  left: 52px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-subtle);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Entry 通用 ── */
+.tl-entry {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  padding: 6px 24px 6px 24px;
+  margin-bottom: 4px;
+  z-index: 1;
+}
+
+.tl-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 48px; /* 52px 中心 - 4px 半宽 = 48px */
+  margin-top: 8px;
+  background: var(--line);
+  border: 2px solid var(--canvas);
+  box-sizing: content-box;
+  z-index: 2;
+  transition: all 150ms ease;
+}
+
+.tl-dot.user {
+  background: var(--signal);
+  /* 用户消息节点也在左边线上，只是颜色不同 */
+}
+
+.tl-dot.agent {
+  background: var(--ink3);
+}
+
+.tl-dot.system {
+  width: 4px;
+  height: 4px;
+  margin-left: 50px;
+  margin-top: 11px;
+  background: var(--line);
+  border: none;
+}
+
+.tl-dot.loop {
+  background: var(--signal);
+  width: 10px;
+  height: 10px;
+  margin-left: 47px;
+  margin-top: 7px;
+}
+
+.tl-dot.loop.running {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.tl-content {
+  flex: 1;
+  min-width: 0;
+  max-width: calc(100% - 100px);
+}
+
+/* 用户消息靠右，但节点还在左边线上 */
+.tl-entry--user .tl-content {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── 空状态 ── */
+.empty-state {
+  height: 100%;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 40px;
+}
+.empty-brand {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+}
+.empty-desc {
+  font-size: 13px;
+  color: var(--ink3);
+  margin-bottom: 28px;
+}
+.empty-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 360px;
+}
+.suggestion-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--ink2);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 120ms ease;
+  font-family: inherit;
+}
+.suggestion-chip:hover {
+  border-color: var(--ink3);
+  background: var(--surface);
+  transform: translateY(-1px);
+}
+.chip-icon {
+  flex-shrink: 0;
+  color: var(--ink3);
+}
+.suggestion-chip:hover .chip-icon {
+  color: var(--ink2);
+}
+.chip-text {
+  flex: 1;
+}
+
+/* ── 系统消息 ── */
+.system-text {
+  font-size: 12px;
+  color: var(--ink3);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+.system-adapter {
+  color: var(--ink4);
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  font-variant: normal;
+}
+.system-content {
+  color: var(--ink2);
+}
+.system-text.is-error .system-content {
+  color: var(--error);
+}
+
+/* 连续系统消息收紧间距 */
+.tl-entry--system + .tl-entry--system {
+  margin-top: -2px;
+}
+.tl-entry--system + .tl-entry--system .tl-dot {
+  opacity: 0.5;
+  width: 4px;
+  height: 4px;
+  margin-left: 50px;
+  margin-top: 11px;
+}
+
+/* ── 消息气泡 ── */
+.bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  border-radius: 12px;
+}
+.bubble--agent {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  color: var(--ink2);
+  border-top-left-radius: 4px;
+}
+.bubble--user {
+  background: var(--signal);
+  color: var(--canvas);
+  border-top-right-radius: 4px;
+}
+.bubble-meta {
+  font-size: 11px;
+  color: var(--ink3);
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bubble--user .bubble-meta {
+  color: rgba(255,255,255,0.6);
+}
+.bubble-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* reasoning */
+.reasoning-block {
+  margin-bottom: 8px;
+}
+.reasoning-toggle {
+  font-size: 11px;
+  color: var(--ink3);
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px dashed var(--line);
+  display: inline-block;
+  margin-bottom: 4px;
+  padding-bottom: 1px;
+}
+.reasoning-body {
+  display: none;
+  font-size: 12px;
+  color: var(--ink3);
+  background: var(--muted);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+.reasoning-body.open { display: block; }
+
+/* ── 异步任务卡片 ── */
+.async-task-card {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  max-width: 85%;
+}
+.async-task-card.error {
+  border-color: var(--error);
+  background: rgba(120, 75, 70, 0.04);
+}
+.async-task-card.done {
+  border-color: var(--success);
+}
+
+.task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.task-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.task-status {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--ink3);
+}
+.task-status.running { color: var(--warning); background: rgba(180, 140, 60, 0.08); }
+.task-status.done { color: var(--success); background: rgba(70, 100, 79, 0.08); }
+.task-status.error,
+.task-status.failed { color: var(--error); background: rgba(120, 75, 70, 0.08); }
+.task-status.awaiting-approval { color: var(--signal); background: var(--signalSoft); }
+.task-status.queued { color: var(--ink3); background: var(--muted); }
+
+.task-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--ink);
+}
+.task-meta {
+  font-size: 11px;
+  color: var(--ink4);
+  font-family: var(--mono);
+  margin-bottom: 12px;
+}
+
+/* 任务步骤时间轴（复用 agent-loop 的 step 样式思路） */
+.task-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+.task-step {
+  display: flex;
+  gap: 10px;
+  min-height: 22px;
+}
+.task-step .step-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 12px;
+  flex-shrink: 0;
+}
+.task-step .step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink4);
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.task-step.running .step-dot { background: var(--warning); }
+.task-step.done .step-dot { background: var(--success); }
+.task-step.failed .step-dot { background: var(--error); }
+.task-step.pending .step-dot { background: var(--ink4); }
+.task-step .step-line {
+  width: 1px;
+  flex: 1;
+  background: var(--line-subtle);
+  margin-top: 2px;
+}
+.task-step .step-body {
+  flex: 1;
+  padding-bottom: 8px;
+}
+.task-step .step-title {
+  font-size: 13px;
+  color: var(--ink2);
+  line-height: 1.4;
+}
+.task-step.running .step-title { color: var(--ink); font-weight: 500; }
+.task-step.done .step-title { color: var(--ink2); }
+.task-step.pending .step-title { color: var(--ink3); }
+.task-step.failed .step-title { color: var(--error); }
+.task-step .step-content {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.task-step .step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.task-step .step-agent {
+  font-size: 10px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.task-step .sub-steps {
+  margin-top: 6px;
+  margin-left: 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-subtle);
+}
+.task-step .sub-step {
+  position: relative;
+  padding-bottom: 6px;
+  display: flex;
+  gap: 6px;
+}
+.task-step .sub-step:last-child {
+  padding-bottom: 0;
+}
+.task-step .sub-rail {
+  position: absolute;
+  left: -16px;
+  top: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.task-step .sub-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink4);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.task-step .sub-dot.running { background: var(--warning); }
+.task-step .sub-dot.done { background: var(--success); }
+.task-step .sub-dot.failed { background: var(--error); }
+.task-step .sub-line {
+  width: 1px;
+  flex: 1;
+  min-height: 8px;
+  background: var(--line-subtle);
+  margin-top: 2px;
+}
+.task-step .sub-body { flex: 1; min-width: 0; }
+.task-step .sub-title {
+  font-size: 12px;
+  color: var(--ink3);
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.task-step .sub-agent {
+  font-size: 9px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.task-step .sub-content {
+  font-size: 11px;
+  color: var(--ink4);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.task-error {
+  font-size: 12px;
+  color: var(--error);
+  padding: 8px 12px;
+  background: rgba(120, 75, 70, 0.06);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.approve-btn {
+  padding: 6px 16px;
+  background: var(--signal);
+  color: var(--canvas);
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+}
 .approve-btn:hover { opacity: 0.9; }
-.dark .approve-btn, [data-theme="dark"] .approve-btn { background: #D4D4D4; color: #141415; }
-.plan-approved { font-size: 12px; color: var(--success); margin-top: 12px; }
-
-/* 搜索开关条 — 放在 CommandBar 上方 */
-.search-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 24px; border-bottom: 1px solid var(--line); }
-.search-btn {
-  padding: 4px 14px; font-size: 11px; font-family: var(--mono);
-  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--surface); color: var(--ink3);
-  transition: all var(--duration-micro);
+.secondary-btn {
+  padding: 6px 14px;
+  background: none;
+  color: var(--ink2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
 }
-.search-btn.active { background: var(--signal); color: var(--canvas); border-color: var(--signal); }
-.search-hint { font-size: 11px; color: var(--ink4); }
-.conv-select {
-  font-size: 11px; font-family: var(--mono); color: var(--ink3);
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: 4px 8px; max-width: 220px; cursor: pointer;
+.secondary-btn:hover {
+  border-color: var(--ink3);
+  color: var(--ink);
 }
 
-/* 助手消息 markdown 排版 */
-.content :deep(h1), .content :deep(h2), .content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
-.content :deep(h1) { font-size: 16px; }
-.content :deep(h2) { font-size: 15px; }
-.content :deep(h3) { font-size: 14px; }
-.content :deep(p) { margin: 6px 0; }
-.content :deep(ul), .content :deep(ol) { margin: 6px 0; padding-left: 20px; }
-.content :deep(li) { margin: 2px 0; }
-.content :deep(code) { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; font-family: var(--mono); }
-.content :deep(pre) { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-.content :deep(pre code) { background: none; border: none; padding: 0; }
-.content :deep(blockquote) { border-left: 3px solid var(--line); padding: 4px 12px; margin: 8px 0; color: var(--ink3); font-style: italic; }
-.content :deep(a) { color: var(--signal); text-decoration: underline; }
-.content :deep(hr) { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+/* ── 审批卡（本地编码沙箱）── */
+.approval-card {
+  max-width: 92%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.approval-card .task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.approval-card .task-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink2);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.approval-card .task-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--line);
+  color: var(--ink2);
+}
+.approval-card .task-status.awaiting-approval {
+  background: rgba(200, 160, 60, 0.12);
+  color: var(--warn, #b8860b);
+}
+.approval-card .task-status.approved {
+  background: rgba(60, 160, 120, 0.12);
+  color: var(--signal, #2e7d52);
+}
+.approval-card .task-status.discarded {
+  background: var(--line);
+  color: var(--ink3);
+}
+.approval-card .task-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.approval-card .task-meta {
+  font-size: 12px;
+  color: var(--ink3);
+  font-family: var(--mono);
+  margin-bottom: 10px;
+}
+.diff-block {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.diff-toggle {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink2);
+  cursor: pointer;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.diff-toggle:hover {
+  color: var(--ink);
+}
+.diff-body {
+  display: none;
+  margin: 0;
+  padding: 12px;
+  font-size: 11px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  color: var(--ink2);
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-block .diff-body.open {
+  display: block;
+}
+.approval-card .task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
 
+/* ── Agent Loop 任务卡（时间轴式） ── */
+.loop-block {
+  max-width: 90%;
+  padding-top: 4px;
+}
+
+.loop-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.loop-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.loop-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  background: var(--muted);
+  color: var(--ink2);
+}
+.loop-status.done {
+  background: var(--muted);
+  color: var(--success);
+}
+.loop-status.error {
+  background: rgba(120, 75, 70, 0.06);
+  color: var(--error);
+}
+
+/* 步骤时间轴 */
+.loop-steps {
+  margin-left: 8px;
+  margin-bottom: 12px;
+  border-left: 1px solid var(--line-subtle);
+  padding-left: 16px;
+}
+.loop-step {
+  position: relative;
+  padding-bottom: 12px;
+  display: flex;
+  gap: 10px;
+}
+.loop-step:last-child {
+  padding-bottom: 0;
+}
+.step-rail {
+  position: absolute;
+  left: -21px;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.step-dot.running {
+  background: var(--signal);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.step-dot.done {
+  background: var(--success);
+}
+.step-dot.failed {
+  background: var(--error);
+}
+.step-line {
+  width: 1px;
+  flex: 1;
+  min-height: 16px;
+  background: var(--line-subtle);
+  margin-top: 4px;
+}
+.step-body {
+  flex: 1;
+  min-width: 0;
+}
+.step-title {
+  font-size: 13px;
+  color: var(--ink2);
+  font-weight: 500;
+}
+.loop-step.done .step-title {
+  color: var(--ink3);
+}
+.step-content {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.step-result {
+  font-size: 12px;
+  color: var(--success);
+  margin-top: 4px;
+  font-family: var(--mono);
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.step-agent {
+  font-size: 10px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+/* 子步骤 */
+.sub-steps {
+  margin-top: 8px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-subtle);
+}
+.sub-step {
+  position: relative;
+  padding-bottom: 8px;
+  display: flex;
+  gap: 8px;
+}
+.sub-step:last-child {
+  padding-bottom: 0;
+}
+.sub-rail {
+  position: absolute;
+  left: -16px;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.sub-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.sub-dot.running {
+  background: var(--signal);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.sub-dot.done {
+  background: var(--success);
+}
+.sub-dot.failed {
+  background: var(--error);
+}
+.sub-line {
+  width: 1px;
+  flex: 1;
+  min-height: 10px;
+  background: var(--line-subtle);
+  margin-top: 3px;
+}
+.sub-body {
+  flex: 1;
+  min-width: 0;
+}
+.sub-title {
+  font-size: 12px;
+  color: var(--ink3);
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sub-agent {
+  font-size: 9px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 0px 5px;
+  border-radius: 3px;
+}
+.sub-content {
+  font-size: 11px;
+  color: var(--ink4);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.sub-result {
+  font-size: 11px;
+  color: var(--success);
+  margin-top: 3px;
+  opacity: 0.8;
+}
+
+/* loop reasoning */
+.loop-reasoning {
+  margin: 8px 0 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line-subtle);
+}
+.loop-reasoning .reasoning-toggle {
+  margin-left: 8px;
+}
+.loop-reasoning .reasoning-body {
+  margin-left: 8px;
+  display: none;
+}
+.loop-reasoning .reasoning-body.open {
+  display: block;
+}
+
+/* 最终回答 */
+.loop-answer {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 8px;
+}
+.answer-label {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--ink3);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.answer-body {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+.loop-error {
+  padding: 10px 14px;
+  color: var(--error);
+  font-size: 12px;
+  background: rgba(120, 75, 70, 0.06);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+/* 训练消息 */
+.train-text {
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  max-width: 85%;
+}
+
+/* 其他执行消息 */
+.exec-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow: auto;
+  max-width: 85%;
+}
+
+/* ── Markdown 样式 ── */
+.bubble-content :deep(h1), .bubble-content :deep(h2), .bubble-content :deep(h3),
+.answer-body :deep(h1), .answer-body :deep(h2), .answer-body :deep(h3) {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.bubble-content :deep(h1), .answer-body :deep(h1) { font-size: 16px; }
+.bubble-content :deep(h2), .answer-body :deep(h2) { font-size: 15px; }
+.bubble-content :deep(h3), .answer-body :deep(h3) { font-size: 14px; }
+.bubble-content :deep(p), .answer-body :deep(p) { margin: 6px 0; }
+.bubble-content :deep(ul), .bubble-content :deep(ol),
+.answer-body :deep(ul), .answer-body :deep(ol) {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.bubble-content :deep(li), .answer-body :deep(li) { margin: 2px 0; }
+.bubble-content :deep(code), .answer-body :deep(code) {
+  background: var(--muted);
+  border: 1px solid var(--line-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.bubble--user .bubble-content :deep(code) {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.2);
+  color: var(--canvas);
+}
+.bubble-content :deep(pre), .answer-body :deep(pre) {
+  background: var(--muted);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.bubble-content :deep(pre code), .answer-body :deep(pre code) {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.bubble-content :deep(blockquote), .answer-body :deep(blockquote) {
+  border-left: 3px solid var(--line);
+  padding: 4px 12px;
+  margin: 8px 0;
+  color: var(--ink3);
+  font-style: italic;
+}
+.bubble-content :deep(a), .answer-body :deep(a) {
+  color: var(--signal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bubble--user .bubble-content :deep(a) {
+  color: var(--canvas);
+}
+.bubble-content :deep(hr), .answer-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
+.reasoning-body :deep(p) { margin: 4px 0; }
 </style>

@@ -34,14 +34,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="view">
-    <div class="page-head">
-      <h1 class="page-title">运行</h1>
-      <p class="page-sub">AI 的状态与体检</p>
-    </div>
-
+  <div class="runtime-view">
     <section class="card">
-      <div class="card-head"><h2>大脑</h2>
+      <div class="card-head"><h3>大脑</h3>
         <span class="badge" :class="dshStore.status === 'running' ? 'ok' : 'bad'">
           {{ dshStore.status === 'running' ? '就绪' : '未就绪' }}
         </span>
@@ -58,7 +53,7 @@ onMounted(async () => {
 
     <section class="card">
       <div class="card-head">
-        <h2>体检</h2>
+        <h3>体检</h3>
         <button class="btn" @click="runDoctor" :disabled="checking">{{ checking ? '检查中…' : '重新体检' }}</button>
       </div>
       <div v-if="doc" class="check-list">
@@ -73,34 +68,58 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.view { padding: 28px 32px; max-width: 720px; }
-.page-head { margin-bottom: 20px; }
-.page-title { font-size: 20px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
-.page-sub { font-size: 13px; color: var(--ink3); margin: 0; }
+.runtime-view { padding: 12px 16px 16px; }
 
-.card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
-.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.card-head h2 { font-size: 14px; font-weight: 600; color: var(--ink2); margin: 0; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.card-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
 
-.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
-.badge.ok { color: var(--color-success, #50634f); background: rgba(80, 99, 79, 0.1); }
-.badge.bad { color: var(--color-error, #7a5049); background: rgba(122, 80, 73, 0.1); }
+.badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); }
+.badge.ok { color: var(--success); background: rgba(70, 100, 79, 0.08); }
+.badge.bad { color: var(--error); background: rgba(120, 75, 70, 0.08); }
 
-.brain-info { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.row { display: flex; font-size: 13px; }
-.k { width: 60px; color: var(--ink4); }
+.brain-info { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.row { display: flex; font-size: 12px; }
+.k { width: 50px; color: var(--ink4); flex-shrink: 0; }
 .v { color: var(--ink2); }
 
-.brain-switch { display: flex; gap: 8px; }
-.btn { border: 1px solid var(--line); background: var(--raised); color: var(--ink2); border-radius: 8px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
-.btn:hover { border-color: var(--signal); }
-.btn.active { background: var(--signal-soft, #ece7de); border-color: var(--signal); color: var(--signal); }
+.brain-switch { display: flex; gap: 6px; }
+.btn {
+  border: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--ink2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+.btn:hover { border-color: var(--ink3); }
+.btn.active { background: var(--signalSoft); border-color: var(--signal); color: var(--signal); }
+.btn:disabled { opacity: 0.5; cursor: default; }
 
-.check-list { display: flex; flex-direction: column; gap: 8px; }
-.check { display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
-.check.pass { background: rgba(80, 99, 79, 0.08); }
-.check.fail { background: rgba(122, 80, 73, 0.08); }
+.check-list { display: flex; flex-direction: column; gap: 6px; }
+.check { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.check.pass { background: rgba(70, 100, 79, 0.08); }
+.check.fail { background: rgba(120, 75, 70, 0.08); }
 .check-name { font-weight: 500; color: var(--ink2); }
-.check-detail { color: var(--ink4); font-size: 12px; }
+.check-detail { color: var(--ink3); font-size: 11px; }
 .hint { font-size: 12px; color: var(--ink4); margin: 0; }
 </style>

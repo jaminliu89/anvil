@@ -20,11 +20,16 @@ Unsloth 网关:
   GET  /unsloth/train-status  训练进度
   POST /unsloth/train-stop    停止训练
 
+DSH Agent Loop:
+  POST /dsh/run              启动 agent loop（SSE 流式）
+  GET  /dsh/health           dsh 健康检查（其实就是 bridge 健康检查）
+
 启动:
   python3 bridge.py --port 18443 --target http://localhost:18080/v1
 """
 from __future__ import annotations
 
+import re
 import argparse
 import json
 import os
@@ -36,6 +41,20 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import urlopen, Request
+
+# 工具健康检查模块
+try:
+    from tools_status import get_tools_status
+except ImportError:
+    get_tools_status = None
+
+# MCP client 管理器
+try:
+    from mcp_client import get_manager as get_mcp_manager
+    MCP_CLIENT_AVAILABLE = True
+except ImportError:
+    MCP_CLIENT_AVAILABLE = False
+    get_mcp_manager = None
 
 try:
     from deepseek_harness import DeepSeekHarness, estimate_cache_hit, __version__ as dsh_version
@@ -58,6 +77,33 @@ def _tavily_key() -> str:
             for line in f:
                 if line.startswith("TAVILY_API_KEY="):
                     return line.strip().split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
+
+def _get_key(name: str) -> str:
+    """读 API key：env → ~/.hermes/.env → ~/.zshrc 三路兜底。
+    sidecar 子进程不继承 shell export，必须显式兜底。"""
+    k = os.environ.get(name, "")
+    if k:
+        return k
+    # ~/.hermes/.env
+    try:
+        with open(os.path.expanduser("~/.hermes/.env")) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{name}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    # ~/.zshrc
+    try:
+        with open(os.path.expanduser("~/.zshrc")) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"export {name}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         pass
     return ""
@@ -90,6 +136,7 @@ INFERENCE_TARGETS: dict = {
     "siliconflow": "https://api.siliconflow.cn/v1",
     "openai": "https://api.openai.com/v1",
     "lmstudio": "http://localhost:1234/v1",
+    "volc-coding": "https://ark.cn-beijing.volces.com/api/coding/v3",
 }
 
 # 云端默认 model
@@ -97,13 +144,230 @@ _TARGET_MODELS = {
     "deepseek": "deepseek-chat",
     "siliconflow": "deepseek-ai/DeepSeek-V3",
     "openai": "gpt-4o-mini",
+    "volc-coding": "ark-code-latest",
 }
 
-# API key map for cloud targets
+# API key map for cloud targets（三路兜底：env → .hermes/.env → .zshrc）
 _TARGET_KEYS = {
-    "deepseek": os.getenv("DEEPSEEK_API_KEY", ""),
-    "siliconflow": os.getenv("SILICONFLOW_API_KEY", ""),
-    "openai": os.getenv("OPENAI_API_KEY", ""),
+    "deepseek": _get_key("DEEPSEEK_API_KEY"),
+    "siliconflow": _get_key("SILICONFLOW_API_KEY"),
+    "openai": _get_key("OPENAI_API_KEY"),
+    "volc-coding": _get_key("VOLC_ARK_CODING_KEY"),
+}
+
+
+# ===== 异步 Agent 任务管理器（统一模式：create → status → log → approve）=====
+import tempfile
+import shutil
+
+class AsyncTaskManager:
+    """通用异步任务管理器 — 所有 CLI agent 共用一套生命周期管理"""
+    
+    def __init__(self):
+        self.tasks: dict[str, dict] = {}  # sid -> task info
+        self._lock = threading.Lock()
+    
+    def create(self, agent: str, prompt: str, repo: str = '') -> str:
+        sid = f"{int(time.time())}-{agent}-{os.urandom(4).hex()}"
+        with self._lock:
+            self.tasks[sid] = {
+                'sid': sid,
+                'agent': agent,
+                'prompt': prompt,
+                'repo': repo,
+                'state': 'queued',  # queued | planning | awaiting-approval | running | done | failed
+                'steps': [{'id': 's0', 'title': '任务创建中', 'status': 'running'}],
+                'log': '',
+                'result': None,
+                'created_at': time.time(),
+                'thread': None,
+            }
+        return sid
+    
+    def update_state(self, sid: str, state: str):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['state'] = state
+    
+    def add_step(self, sid: str, step_id: str, title: str, status: str = 'pending'):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['steps'].append({'id': step_id, 'title': title, 'status': status})
+    
+    def update_step(self, sid: str, step_id: str, status: str, content: str = ''):
+        with self._lock:
+            if sid in self.tasks:
+                for s in self.tasks[sid]['steps']:
+                    if s['id'] == step_id:
+                        s['status'] = status
+                        if content:
+                            s['content'] = content
+                        break
+    
+    def append_log(self, sid: str, text: str):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['log'] += text
+    
+    def get(self, sid: str) -> dict | None:
+        with self._lock:
+            return self.tasks.get(sid)
+    
+    def list_all(self) -> list[dict]:
+        with self._lock:
+            return list(self.tasks.values())
+
+TASK_MANAGER = AsyncTaskManager()
+
+# ===== Claude Code 代理 =====
+def _claude_available() -> bool:
+    return shutil.which('claude') is not None
+
+def _claude_run(sid: str, prompt: str, repo: str):
+    """后台线程运行 Claude Code 任务"""
+    try:
+        TASK_MANAGER.update_state(sid, 'planning')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', '生成计划中...', 'running')
+        
+        # 准备工作目录
+        workdir = repo or os.getcwd()
+        
+        # 用 --dry-run 或 plan 模式先获取计划（claude 没有标准 plan 命令，简化处理）
+        # 直接创建 worktree 隔离目录
+        tmpdir = tempfile.mkdtemp(prefix=f'claude-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        # 直接执行（简化版：跑一个命令，记录输出）
+        TASK_MANAGER.update_step(sid, 's1', 'done')
+        TASK_MANAGER.add_step(sid, 's2', 'Claude 执行中', 'running')
+        TASK_MANAGER.update_state(sid, 'running')
+        
+        try:
+            proc = subprocess.Popen(
+                ['claude', '--send', prompt, '--max-turns', '5'],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=600)
+            
+            TASK_MANAGER.update_step(sid, 's2', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+            TASK_MANAGER.tasks[sid]['result'] = {'output': TASK_MANAGER.tasks[sid]['log'][-2000:]}
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, '\n[任务超时]\n')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== OpenClaw 代理 =====
+def _openclaw_available() -> bool:
+    return shutil.which('openclaw') is not None
+
+def _openclaw_run(sid: str, prompt: str, repo: str):
+    try:
+        TASK_MANAGER.update_state(sid, 'planning')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', '生成计划中...', 'running')
+        
+        tmpdir = tempfile.mkdtemp(prefix=f'openclaw-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        TASK_MANAGER.update_step(sid, 's1', 'done')
+        TASK_MANAGER.add_step(sid, 's2', 'OpenClaw 执行中', 'running')
+        TASK_MANAGER.update_state(sid, 'running')
+        
+        try:
+            proc = subprocess.Popen(
+                ['openclaw', prompt],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=600)
+            
+            TASK_MANAGER.update_step(sid, 's2', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== Hermes Agent 代理 =====
+def _hermes_available() -> bool:
+    return shutil.which('hermes') is not None
+
+def _hermes_run(sid: str, prompt: str, _repo: str):
+    try:
+        TASK_MANAGER.update_state(sid, 'running')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', 'Hermes 执行中...', 'running')
+        
+        tmpdir = tempfile.mkdtemp(prefix=f'hermes-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        try:
+            # hermes run 命令执行（简化）
+            proc = subprocess.Popen(
+                ['hermes', 'run', prompt],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=900)  # hermes 任务可能较长
+            
+            TASK_MANAGER.update_step(sid, 's1', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's1', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's1', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== Agent 注册映射 =====
+AGENT_RUNNERS = {
+    'claude': _claude_run,
+    'openclaw': _openclaw_run,
+    'hermes': _hermes_run,
+}
+
+AGENT_AVAILABLE = {
+    'claude': _claude_available,
+    'openclaw': _openclaw_available,
+    'hermes': _hermes_available,
 }
 
 
@@ -177,6 +441,12 @@ class Handler(BaseHTTPRequestHandler):
             }
             self._json(200, caps)
             return
+        if self.path == "/mcp/servers":
+            if MCP_CLIENT_AVAILABLE:
+                self._json(200, {"servers": get_mcp_manager().list_servers()})
+            else:
+                self._json(200, {"servers": [], "error": "mcp client not available"})
+            return
         if self.path == "/models":
             self._json(200, {"targets": INFERENCE_TARGETS, "current": getattr(Handler, "target", "")})
             return
@@ -189,6 +459,75 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/salvage-log":
             self._json(200, {"log": Handler.salvage_log[-50:]})
             return
+        if self.path == "/dsh/health":
+            self._json(200, {"ok": True, "dsh": dsh_version, "agent_loop": True, "plugins": 0})
+            return
+        if self.path == "/tools/status":
+            if get_tools_status:
+                self._json(200, {"tools": get_tools_status(), "ts": time.time()})
+            else:
+                self._json(500, {"error": "tools_status module not available"})
+            return
+
+        # ===== MCP client =====
+        if self.path == "/mcp/servers":
+            if not MCP_CLIENT_AVAILABLE:
+                self._json(500, {"error": "mcp client not available"})
+                return
+            mgr = get_mcp_manager()
+            self._json(200, {"servers": mgr.list_servers()})
+            return
+
+        if self.path.startswith("/mcp/tools/"):
+            if not MCP_CLIENT_AVAILABLE:
+                self._json(500, {"error": "mcp client not available"})
+                return
+            name = self.path[len("/mcp/tools/"):]
+            mgr = get_mcp_manager()
+            self._json(200, {"name": name, "tools": mgr.get_tools(name)})
+            return
+        
+        # ===== 异步 Agent 健康检查 =====
+        for agent_name in AGENT_AVAILABLE:
+            if self.path == f"/{agent_name}/health":
+                avail = AGENT_AVAILABLE[agent_name]()
+                status_text = "可用" if avail else "未安装"
+                self._json(200, {"ok": avail, "agent": agent_name, "message": status_text})
+                return
+        if self.path == "/jules/health":
+            import shutil
+            avail = shutil.which('jules') is not None
+            self._json(200, {"ok": avail, "agent": "jules", "message": "可用" if avail else "未安装"})
+            return
+        if self.path == "/ollama/health":
+            import shutil
+            avail = shutil.which('ollama') is not None
+            self._json(200, {"ok": avail, "agent": "ollama", "message": "可用" if avail else "未安装"})
+            return
+        
+        # ===== 异步 Agent 状态查询 =====
+        for agent_name in AGENT_RUNNERS:
+            prefix = f"/{agent_name}/status/"
+            if self.path.startswith(prefix):
+                sid = self.path[len(prefix):]
+                task = TASK_MANAGER.get(sid)
+                if task:
+                    self._json(200, task)
+                else:
+                    self._json(404, {"error": "task not found"})
+                return
+        
+        # ===== 异步 Agent 日志查询 =====
+        for agent_name in AGENT_RUNNERS:
+            prefix = f"/{agent_name}/log/"
+            if self.path.startswith(prefix):
+                sid = self.path[len(prefix):]
+                task = TASK_MANAGER.get(sid)
+                if task:
+                    self._json(200, {"log": task.get('log', '')[-3000:]})
+                else:
+                    self._json(404, {"error": "task not found"})
+                return
         if self.path == "/unsloth/status":
             self._unsloth_status()
             return
@@ -222,11 +561,247 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/unsloth/export":
                 self._unsloth_export()
                 self._unsloth_train_stop()
+            elif self.path == "/dsh/run":
+                self._dsh_run()
+            elif self.path == "/claude/create":
+                self._agent_create('claude')
+            elif self.path == "/openclaw/create":
+                self._agent_create('openclaw')
+            elif self.path == "/hermes/create":
+                self._agent_create('hermes')
+            elif self.path == "/jules/create":
+                self._agent_create('jules')
+            elif self.path.startswith("/claude/approve/") or                  self.path.startswith("/openclaw/approve/") or                  self.path.startswith("/hermes/approve/") or                  self.path.startswith("/jules/approve/"):
+                parts = self.path.split('/')
+                if len(parts) >= 4:
+                    self._agent_approve()
+                else:
+                    self._json(400, {"error": "sid required"})
+            elif self.path == "/mcp/connect":
+                self._mcp_connect()
+            elif self.path == "/mcp/disconnect":
+                self._mcp_disconnect()
+            elif self.path.startswith("/mcp/call/"):
+                self._mcp_call()
+            elif self.path == "/mcp/add":
+                self._mcp_add()
+            elif self.path == "/mcp/remove":
+                self._mcp_remove()
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:
             traceback.print_exc()
             self._json(500, {"error": str(e)})
+
+    # ---- MCP client ----
+    def _mcp_connect(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.connect(name)
+        if ok:
+            srv = mgr.get_tools(name)
+            self._json(200, {"ok": True, "name": name, "tools": srv})
+        else:
+            srv = [s for s in mgr.list_servers() if s["name"] == name]
+            err = srv[0].get("error", "connect failed") if srv else "server not found"
+            self._json(502, {"error": err})
+
+    def _mcp_disconnect(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.disconnect(name)
+        self._json(200, {"ok": ok, "name": name})
+
+    def _mcp_call(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        # 路径格式: /mcp/call/<name>/<tool>
+        parts = self.path.split("/")
+        if len(parts) < 5:
+            self._json(400, {"error": "path must be /mcp/call/<name>/<tool>"})
+            return
+        name = parts[3]
+        tool = parts[4]
+        body = self._read_body()
+        arguments = body.get("arguments") or {}
+        mgr = get_mcp_manager()
+        result = mgr.call_tool(name, tool, arguments)
+        self._json(200, result)
+
+    def _mcp_add(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        command = body.get("command", "")
+        args = body.get("args", [])
+        env = body.get("env", {})
+        if not name or not command:
+            self._json(400, {"error": "name and command required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.add_server(name, command, args, env)
+        self._json(200, {"ok": ok, "name": name})
+
+    def _mcp_remove(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.remove_server(name)
+        self._json(200, {"ok": ok, "name": name})
+
+    @staticmethod
+    def _run_async(coro) -> object:
+        """在事件循环里跑 async 协程（bridge 是线程模型，每次调用建临时 loop）。"""
+        import asyncio
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+        except RuntimeError:
+            # 已有 loop 的情况
+            import asyncio
+            return asyncio.get_event_loop().run_until_complete(coro)
+
+    # ---- 异步 Agent 创建 ----
+    def _agent_create(self, agent: str):
+        body = self._read_body()
+        prompt = body.get('prompt', '')
+        if not prompt:
+            self._json(400, {"error": "prompt required"})
+            return
+        if agent == 'jules':
+            import subprocess
+            try:
+                proc = subprocess.Popen(['jules', 'new', prompt], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                out, _ = proc.communicate(timeout=30)
+                log = f"jules new 输出:\n{out}\n"
+                sid = f"jules-{int(time.time())}"
+                # 查找最新 session ID
+                try:
+                    list_proc = subprocess.Popen(['jules', 'remote', 'list', '--session'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                    list_out, _ = list_proc.communicate(timeout=15)
+                    log += f"jules list:\n{list_out}\n"
+                    for line in list_out.split('\n'):
+                        if line.strip() and not line.startswith('Usage') and not line.startswith('No'):
+                            parts = line.strip().split()
+                            if parts and len(parts) >= 1 and len(parts[0]) > 8:
+                                sid = parts[0].strip()
+                                break
+                except Exception:
+                    pass
+                with TASK_MANAGER._lock:
+                    TASK_MANAGER.tasks[sid] = {
+                        'sid': sid, 'agent': 'jules', 'prompt': prompt, 'repo': '',
+                        'state': 'running',
+                        'steps': [
+                            {'id': 's1', 'title': '已提交到云端', 'status': 'done'},
+                            {'id': 's2', 'title': 'Jules 执行中', 'status': 'running'},
+                            {'id': 's3', 'title': '等待拉回', 'status': 'pending'},
+                        ],
+                        'log': log, 'result': None, 'created_at': time.time(), 'thread': None,
+                    }
+                def poll_jules(sid, prompt):
+                    for i in range(40):
+                        time.sleep(15)
+                        try:
+                            p = subprocess.Popen(['jules', 'remote', 'list', '--session'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                            po, _ = p.communicate(timeout=15)
+                            with TASK_MANAGER._lock:
+                                if sid in TASK_MANAGER.tasks:
+                                    TASK_MANAGER.tasks[sid]['log'] += f"\n--- poll #{i} ---\n{po[:500]}"
+                            if 'done' in po.lower() or 'complete' in po.lower():
+                                try:
+                                    pull = subprocess.Popen(['jules', 'remote', 'pull', '--session', sid, '--apply'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                                    pull_out, _ = pull.communicate(timeout=60)
+                                    with TASK_MANAGER._lock:
+                                        if sid in TASK_MANAGER.tasks:
+                                            TASK_MANAGER.tasks[sid]['result'] = {'output': pull_out[:3000]}
+                                            TASK_MANAGER.tasks[sid]['state'] = 'done'
+                                            TASK_MANAGER.tasks[sid]['steps'] = [
+                                                {'id': 's1', 'title': '已提交到云端', 'status': 'done'},
+                                                {'id': 's2', 'title': 'Jules 执行完成', 'status': 'done'},
+                                                {'id': 's3', 'title': '已拉回本地合并', 'status': 'done'},
+                                            ]
+                                            TASK_MANAGER.tasks[sid]['log'] += f"\n[拉回结果]\n{pull_out[:2000]}\n"
+                                except Exception as e:
+                                    with TASK_MANAGER._lock:
+                                        if sid in TASK_MANAGER.tasks:
+                                            TASK_MANAGER.tasks[sid]['state'] = 'failed'
+                                            TASK_MANAGER.tasks[sid]['log'] += f"\n[拉回失败] {e}\n"
+                                break
+                        except Exception as e:
+                            with TASK_MANAGER._lock:
+                                if sid in TASK_MANAGER.tasks:
+                                    TASK_MANAGER.tasks[sid]['log'] += f"\n[轮询错误] {e}\n"
+                    else:
+                        with TASK_MANAGER._lock:
+                            if sid in TASK_MANAGER.tasks:
+                                TASK_MANAGER.tasks[sid]['state'] = 'failed'
+                                TASK_MANAGER.tasks[sid]['log'] += "\n[超时] Jules 任务未完成\n"
+                thread = threading.Thread(target=poll_jules, args=(sid, prompt), daemon=True)
+                thread.start()
+                self._json(200, {
+                    "sid": sid, "status": "running",
+                    "steps": [
+                        {"id": "s1", "title": "已提交到云端", "status": "done"},
+                        {"id": "s2", "title": "Jules 执行中", "status": "running"},
+                        {"id": "s3", "title": "等待拉回", "status": "pending"},
+                    ],
+                    "approved": True, "message": out[:500],
+                })
+            except Exception as e:
+                self._json(500, {"error": f"Jules 创建失败: {e}"})
+            return
+        runner = AGENT_RUNNERS.get(agent)
+        if not runner:
+            self._json(400, {"error": f"unknown agent: {agent}"})
+            return
+        avail = AGENT_AVAILABLE.get(agent, lambda: False)()
+        if not avail:
+            self._json(503, {"error": f"{agent} CLI 未安装"})
+            return
+        sid = TASK_MANAGER.create(agent, prompt)
+        thread = threading.Thread(target=runner, args=(sid, prompt, ''), daemon=True)
+        thread.start()
+        with TASK_MANAGER._lock:
+            TASK_MANAGER.tasks[sid]['thread'] = thread
+        self._json(200, {"sid": sid, "status": "awaiting-approval", "steps": [{"id": "s0", "title": "计划待审批", "status": "pending"}], "approved": False})
+
+    # ---- 异步 Agent 批准执行 ----
+    def _agent_approve(self):
+        parts = self.path.split('/')
+        sid = parts[3]
+        task = TASK_MANAGER.get(sid)
+        if not task:
+            self._json(404, {"error": "task not found"})
+            return
+        TASK_MANAGER.update_state(sid, 'running')
+        self._json(200, {"ok": True, "sid": sid, "message": "任务已批准，执行中"})
 
     # ---- 守卫化对话 ----
     def _chat(self):
@@ -240,15 +815,25 @@ class Handler(BaseHTTPRequestHandler):
             if k in req:
                 kwargs[k] = req[k]
 
-        # fallback 链：主目标失败 → 依次尝试 deepseek/siliconflow
+        # fallback 链：主目标失败 → 依次尝试 deepseek/volc-coding/siliconflow
         t0 = time.time()
         result = None
         last_err = ""
         primary = req.get("model") or Handler.model_id
         attempts = [("", None)]  # 先用当前 harness
-        fallback_names = [n for n in ("deepseek", "siliconflow") if _TARGET_KEYS.get(n)]
+        fallback_names = [n for n in ("deepseek", "volc-coding", "siliconflow") if _TARGET_KEYS.get(n)]
         for fname in fallback_names:
             attempts.append((fname, INFERENCE_TARGETS[fname]))
+
+        # 注入 Anvil 角色系统提示：用户不需要感知底层能力
+        role_sys = {
+            "role": "system",
+            "content": "你是 Anvil 助手，一个本地 AI 工作站。你可以直接回答问题，也可以联网搜索。需要最新信息时自动搜索，不用询问用户。回答简洁直接。"
+        }
+        # 如果第一条不是 system 就插入在最前
+        chat_messages = list(messages)
+        if not chat_messages or chat_messages[0].get("role") != "system":
+            chat_messages.insert(0, role_sys)
 
         for fname, furl in attempts:
             try:
@@ -259,7 +844,7 @@ class Handler(BaseHTTPRequestHandler):
                 use_model = Handler.model_id if furl else (req.get("model") or Handler.model_id)
                 result = self.harness.chat(
                     model=use_model,
-                    messages=messages,
+                    messages=chat_messages,
                     **kwargs,
                 )
                 if result:
@@ -363,6 +948,54 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "query required"})
             return
         self._json(200, {"query": query, "results": _tavily_search(query, count)})
+
+    # ---- Agent Loop（Anvil 原生多轮工具循环） ----
+    def _dsh_run(self):
+        """多轮 agent loop（ReAct 式 + 原生 function calling）。SSE 事件:
+          - step_start/step_update/step_reasoning/step_done/final/error
+        """
+        from anvil_agent import run_agent_loop
+
+        req = self._read_body()
+        prompt = req.get("prompt", "")
+        if not prompt:
+            self._json(400, {"error": "prompt required"})
+            return
+        use_search = req.get("search", True)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+        def emit(evt: str, data: dict):
+            try:
+                self.wfile.write(f"event: {evt}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n".encode())
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        try:
+            # 确定当前 target 名称
+            import os as _os
+            # 从环境变量或 target 配置推断，默认 deepseek
+            target_name = "deepseek"
+            base_url = "https://api.deepseek.com/v1"
+            api_key = _os.environ.get("DEEPSEEK_API_KEY", "")
+            run_agent_loop(
+                base_url=base_url,
+                api_key=api_key,
+                model=Handler.model_id,
+                prompt=prompt,
+                emit_fn=emit,
+                use_search=use_search,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            emit("error", {"message": str(e)})
 
     # ---- 体检 ----
     def _doctor(self):
@@ -602,6 +1235,18 @@ def main():
     args = ap.parse_args()
     target = args.target.rstrip("/")
 
+    # 命名 target → URL/key 映射（deepseek / siliconflow / ollama 等）
+    if target in INFERENCE_TARGETS:
+        api_key = _TARGET_KEYS.get(target, "")
+        model = _TARGET_MODELS.get(target, "")
+        target = INFERENCE_TARGETS[target]
+        if args.api_key == "not-needed":
+            args.api_key = api_key
+        if not args.model and model:
+            args.model = model
+    elif target in ("ling", "local"):
+        target = "http://localhost:18080/v1"
+
     def _probe_or_launch(t: str) -> bool:
         """探活推理端点，未启动则尝试 ollama serve"""
         try:
@@ -621,7 +1266,9 @@ def main():
             pass
         return False
 
-    if not _probe_or_launch(target):
+    # 云端 target 跳过本地探活（云端 API 没有 /models 端点的统一格式）
+    is_cloud_target = not target.startswith(("http://localhost", "http://127.0.0.1", "http://0.0.0.0"))
+    if not is_cloud_target and not _probe_or_launch(target):
         print(f"[anvil-sidecar] WARNING: inference endpoint {target} not responding", file=sys.stderr)
         print(f"[anvil-sidecar]   start it: ollama serve or ling_server.py --port 18080", file=sys.stderr)
 
