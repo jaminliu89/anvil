@@ -10,12 +10,13 @@ import SettingsView from '@/views/SettingsView.vue'
 import RuntimeView from '@/views/RuntimeView.vue'
 import Drawer from '@/components/Drawer.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
+import TaskQueueView from '@/views/TaskQueueView.vue'
 
 const dshStore = useDshStore()
 const settingsStore = useSettingsStore()
 
 // 抽屉状态: null 关闭, 否则是 drawer key
-type DrawerKey = 'history' | 'connect' | 'train' | 'guard' | 'settings' | 'runtime' | null
+type DrawerKey = 'history' | 'queue' | 'connect' | 'train' | 'guard' | 'settings' | 'runtime' | null
 const activeDrawer = ref<DrawerKey>(null)
 
 const timelineRef = ref<InstanceType<typeof TimelineView> | null>(null)
@@ -31,6 +32,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'timeline', icon: 'timeline', label: '时间线' },
   { id: 'history', icon: 'list', label: '历史', drawer: 'history' },
+  { id: 'queue', icon: 'clock', label: '队列', drawer: 'queue' },
   { id: 'connect', icon: 'link', label: '连接', drawer: 'connect' },
   { id: 'settings', icon: 'gear', label: '设置', drawer: 'settings' },
 ]
@@ -55,7 +57,7 @@ function handleNavClick(item: NavItem) {
 }
 
 function openDrawer(key: string) {
-  const validKeys: DrawerKey[] = ['history', 'connect', 'train', 'guard', 'settings', 'runtime']
+  const validKeys: DrawerKey[] = ['history', 'queue', 'connect', 'train', 'guard', 'settings', 'runtime']
   if (validKeys.includes(key as DrawerKey)) {
     activeDrawer.value = key as DrawerKey
   }
@@ -66,6 +68,7 @@ const isTimelineActive = computed(() => activeDrawer.value === null)
 // 抽屉标题映射
 const drawerTitles: Record<string, string> = {
   history: '历史对话',
+  queue: '任务队列',
   connect: '连接',
   runtime: '运行时',
   train: '训练',
@@ -75,6 +78,7 @@ const drawerTitles: Record<string, string> = {
 
 // 抽屉内容组件映射
 const drawerComponents: Record<string, ReturnType<typeof shallowRef>> = {
+  queue: shallowRef(TaskQueueView),
   connect: shallowRef(ConnectView),
   runtime: shallowRef(RuntimeView),
   train: shallowRef(TrainView),

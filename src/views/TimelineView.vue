@@ -5,6 +5,7 @@ import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
 import { guessIntent } from '@/adapters/intent'
+import { useTaskQueueStore } from '@/stores/task-queue'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
@@ -69,6 +70,7 @@ async function runChatWithAdapter(adapterId: string, text: string) {
  *  创建 plan 类型卡片 + 启动状态轮询 + 完成后回填结果
  */
 function dispatchAsyncTask(adapterId: string, text: string) {
+  const queue = useTaskQueueStore()
   const adapter = get(adapterId)
   if (!adapter) {
     // 兜底 dsh
@@ -107,6 +109,18 @@ function dispatchAsyncTask(adapterId: string, text: string) {
       if (result.sessionId) {
         startTaskPolling(entryId, adapterId, result.sessionId)
       }
+      // 注册到任务队列
+      queue.addOrUpdate({
+        id: entryId,
+        entryId,
+        adapterId,
+        title: (result.title as string) || '',
+        sessionId: result.sessionId || '',
+        status: computedStatus as any,
+        createdAt: Date.now(),
+        branch: result.branch as string | undefined,
+        approved: result.approved as boolean | undefined,
+      })
     } else if (result.type === 'system') {
       // 出错了
       updateEntryData(entryId, { status: 'error', error: result.content })
@@ -554,6 +568,7 @@ function viewTaskLog(entry: TimelineEntry) {
 const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 function startTaskPolling(entryId: string, adapterId: string, sessionId: string) {
+  const queue = useTaskQueueStore()
   if (!sessionId || pollTimers.has(entryId)) return
 
   const interval = setInterval(async () => {
@@ -586,6 +601,19 @@ function startTaskPolling(entryId: string, adapterId: string, sessionId: string)
 
       if (state) {
         updateEntryData(entryId, { status: state, steps: steps || [] })
+        // 更新任务队列中的状态
+        const task = entries.value.find(e => e.id === entryId)
+        if (task) {
+          queue.addOrUpdate({
+            id: entryId,
+            entryId,
+            adapterId: task.adapterId,
+            title: (task.data.title as string) || '',
+            sessionId: (task.data.sessionId as string) || '',
+            status: state as any,
+            createdAt: (task.data.createdAt as number) || Date.now(),
+          })
+        }
       }
 
       if (state === 'done' || state === 'failed' || state === 'error') {
