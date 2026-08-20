@@ -3,6 +3,7 @@
 
 pub mod dsh;
 pub mod pi;
+pub mod codex;
 pub mod tray;
 pub mod shortcuts;
 pub mod system_commands;
@@ -34,6 +35,8 @@ pub fn run() {
             pi::commands::pi_status,
             pi::commands::pi_send_prompt,
             pi::commands::pi_check_installed,
+            codex::run_codex,
+            codex::get_codex_quota,
             system_commands::toggle_window,
             system_commands::quit_app,
             git_sandbox::sandbox_create,
