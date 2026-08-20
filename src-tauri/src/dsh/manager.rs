@@ -31,7 +31,7 @@ pub struct SidecarManager {
 }
 
 impl SidecarManager {
-    const DEFAULT_TARGET: &'static str = "http://localhost:18080/v1";
+    const DEFAULT_TARGET: &'static str = "deepseek";
 
     const fn new() -> Self {
         Self {

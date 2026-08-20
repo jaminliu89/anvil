@@ -1164,6 +1164,18 @@ def main():
     args = ap.parse_args()
     target = args.target.rstrip("/")
 
+    # 命名 target → URL/key 映射（deepseek / siliconflow / ollama 等）
+    if target in INFERENCE_TARGETS:
+        api_key = _TARGET_KEYS.get(target, "")
+        model = _TARGET_MODELS.get(target, "")
+        target = INFERENCE_TARGETS[target]
+        if args.api_key == "not-needed":
+            args.api_key = api_key
+        if not args.model and model:
+            args.model = model
+    elif target in ("ling", "local"):
+        target = "http://localhost:18080/v1"
+
     def _probe_or_launch(t: str) -> bool:
         """探活推理端点，未启动则尝试 ollama serve"""
         try:
@@ -1183,7 +1195,9 @@ def main():
             pass
         return False
 
-    if not _probe_or_launch(target):
+    # 云端 target 跳过本地探活（云端 API 没有 /models 端点的统一格式）
+    is_cloud_target = not target.startswith(("http://localhost", "http://127.0.0.1", "http://0.0.0.0"))
+    if not is_cloud_target and not _probe_or_launch(target):
         print(f"[anvil-sidecar] WARNING: inference endpoint {target} not responding", file=sys.stderr)
         print(f"[anvil-sidecar]   start it: ollama serve or ling_server.py --port 18080", file=sys.stderr)
 
