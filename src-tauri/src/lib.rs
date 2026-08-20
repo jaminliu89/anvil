@@ -6,6 +6,7 @@ pub mod pi;
 pub mod tray;
 pub mod shortcuts;
 pub mod system_commands;
+pub mod git_sandbox;
 
 /// 应用入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,6 +36,13 @@ pub fn run() {
             pi::commands::pi_check_installed,
             system_commands::toggle_window,
             system_commands::quit_app,
+            git_sandbox::sandbox_create,
+            git_sandbox::sandbox_discard,
+            git_sandbox::sandbox_merge,
+            git_sandbox::sandbox_diff,
+            git_sandbox::sandbox_apply_and_commit,
+            git_sandbox::sandbox_current_branch,
+            git_sandbox::sandbox_list_branches,
         ])
         // ====== 窗口事件：关闭 → 最小化到托盘 ======
         .on_window_event(|window, event| {

@@ -2,6 +2,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { Adapter, ExecutionResult } from './types'
+import { getToolStatus } from './health'
 
 export const reasonixAdapter: Adapter = {
   id: 'reasonix',
@@ -41,6 +42,11 @@ export const reasonixAdapter: Adapter = {
   render() { /* TimelineView 内联渲染 */ },
 
   async status() {
+    const s = await getToolStatus('reasonix')
+    if (s) {
+      return { available: s.available, healthy: s.healthy, message: s.message }
+    }
+    // bridge 不可用时回退到原来的检查
     try {
       await invoke('check_reasonix_installed')
       return { available: true, healthy: true, message: 'Reasonix 已安装' }

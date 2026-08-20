@@ -14,6 +14,7 @@ import { hermesAdapter } from './hermes-adapter'
 import { antigravityAdapter } from './antigravity-adapter'
 import { dshAdapter } from './dsh-adapter'
 import { unslothAdapter } from './unsloth-adapter'
+import { localCodingAdapter } from './local-coding-adapter'
 
 let initialized = false
 
@@ -43,4 +44,7 @@ export function registerAllAdapters() {
   // —— 本地聊天 ——
   register(lingAdapter)
   register(ollamaAdapter)
+
+  // —— 本地编码（沙箱隔离）——
+  register(localCodingAdapter)
 }

@@ -4,7 +4,8 @@ import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
-import { guessIntent, resolveCodeAdapter, getCodeFallbackChain } from '@/adapters/intent'
+import { guessIntent, resolveCodeAdapter, getCodeFallbackChain, getFallbackChain } from '@/adapters/intent'
+import { getHealthyToolIds } from '@/adapters/health'
 import { useTaskQueueStore } from '@/stores/task-queue'
 import { useSettingsStore } from '@/stores/settings'
 import type { Parsed } from '@/adapters/parse'
@@ -145,89 +146,52 @@ function dispatchAsyncTask(adapterId: string, text: string) {
 }
 
 /** 统一调度入口 — 根据意图选最合适的执行方式
- *  编码类任务走降级链：Codex → Pi → dsh，挂了自动切下一个
+ *  编码/研究/聊天 三类任务各有自己的降级链，挂了自动切下一个
  */
 function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | null) {
-  // 编码类任务 → 走降级链选 adapter
-  const isCodeTask = intent?.category === 'code'
-  let adapterId = DEFAULT_ADAPTER
+  const category = intent?.category || 'chat'
 
-  if (isCodeTask) {
-    adapterId = resolveCodeAdapter(intent || null)
-  } else if (intent?.adapterId && intent.adapterId !== 'system') {
-    adapterId = intent.adapterId
-  }
+  // 编码类任务 → 走编码降级链
+  if (category === 'code') {
+    const adapterId = resolveCodeAdapter(intent || null)
+    const adapter = get(adapterId)
+    const hasLoop = adapter?.capabilities?.some(c => c.type === 'agent-loop')
+    const isAsync = adapter?.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') && !hasLoop
 
-  let adapter = get(adapterId)
-
-  // 没找到目标 adapter → 如果是编码任务，走降级链挨个试
-  if (!adapter && isCodeTask) {
-    const chain = getCodeFallbackChain()
-    const fallbackId = chain[0] || 'dsh'
-    adapter = get(fallbackId)
-    adapterId = fallbackId
-  }
-
-  if (!adapter) {
-    const fallback = get('dsh') || all()[0]
-    addEntry('system', 'system', { content: intent?.adapterName ? `${intent.adapterName} 暂不可用，由 Agent Loop 接手` : '正在处理...' })
-    addEntry('agent-loop', fallback.id, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
-    const loopId = entries.value[entries.value.length - 1].id
-    startAgentLoop(text, loopId)
-    return
-  }
-
-  const hasLoop = adapter.capabilities?.some(c => c.type === 'agent-loop')
-  // 有 plan/execute 能力的 = 异步编码 agent，走任务卡片
-  const isAsyncCode = adapter.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') &&
-    !hasLoop &&
-    (intent?.category === 'code' || intent?.category === 'research')
-
-  // 编码任务 + 异步执行 → 包一层带自动降级的派发
-  if (isCodeTask && isAsyncCode) {
-    dispatchCodeWithFallback(adapterId, text)
-    busy.value = false
-    return
-  }
-
-  // DSH 特殊路由：简单聊天走 chat，复杂多步任务走 agent loop
-  if (adapterId === 'dsh') {
-    const isComplex = intent?.category === 'code' || intent?.category === 'research' ||
-      /(分析|研究|对比|调研|帮我.*一下|查一下|搜索|最新|新闻)/.test(text)
-    if (isComplex && hasLoop) {
+    if (isAsync) {
+      dispatchCodeWithFallback(adapterId, text)
+      busy.value = false
+      return
+    }
+    // dsh 或其他有 loop 的编码任务
+    if (hasLoop) {
       addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
       const loopId = entries.value[entries.value.length - 1].id
       startAgentLoop(text, loopId)
-    } else if (adapter.chat) {
-      runChatWithAdapter(adapterId, text)
-      busy.value = false
-    } else {
-      addEntry('system', 'system', { content: 'DSH 服务异常，请检查 bridge 是否启动' })
-      busy.value = false
+      return
     }
+  }
+
+  // 研究/写作类任务 → 走研究降级链
+  if (category === 'research') {
+    const adapterId = intent?.adapterId || 'hermes'
+    dispatchResearchWithFallback(adapterId, text)
+    busy.value = false
     return
   }
 
-  if (hasLoop) {
-    // agent loop = 同步多步
-    addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
-    const loopId = entries.value[entries.value.length - 1].id
-    startAgentLoop(text, loopId)
-  } else if (isAsyncCode) {
-    // 异步任务（编码/研究类）
-    dispatchAsyncTask(adapterId, text)
-    busy.value = false  // 异步任务不阻塞输入
-  } else if (adapter.chat) {
-    // 普通同步聊天
-    runChatWithAdapter(adapterId, text)
-    busy.value = false
-  } else {
-    // 啥都不会 → 兜底 dsh
-    addEntry('system', 'system', { content: `${adapter.name} 不支持直接聊天，由 Agent Loop 接手` })
-    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
-    const loopId = entries.value[entries.value.length - 1].id
-    startAgentLoop(text, loopId)
+  // 聊天类任务 → 走聊天降级链
+  if (category === 'chat') {
+    dispatchChatWithFallback(text)
+    return
   }
+
+  // 兜底：dsh agent loop
+  const fallback = get('dsh') || all()[0]
+  addEntry('system', 'system', { content: intent?.adapterName ? `${intent.adapterName} 暂不可用，由 Agent Loop 接手` : '正在处理...' })
+  addEntry('agent-loop', fallback.id, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+  const loopId = entries.value[entries.value.length - 1].id
+  startAgentLoop(text, loopId)
 }
 
 /**
@@ -235,11 +199,28 @@ function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | nu
  * 从当前 adapter 开始，按降级链逐个尝试，第一个成功的就是最终结果。
  * 用户只看到结果，不感知切换了几个。
  */
-function dispatchCodeWithFallback(firstAdapterId: string, text: string) {
+async function dispatchCodeWithFallback(firstAdapterId: string, text: string) {
+  // 先拉真实健康状态，过滤掉不可用的
+  const healthyIds = await getHealthyToolIds()
   const chain = getCodeFallbackChain()
-  // 从用户指定的那个开始（或默认从第一个开始）
-  const startIdx = Math.max(0, chain.indexOf(firstAdapterId))
-  const tryChain = chain.slice(startIdx)
+
+  // 过滤：注册了 + 健康的（健康检查没拉到就全保留，让 execute 时再报）
+  let tryChain = chain.filter(id => {
+    const adapter = get(id)
+    if (!adapter) return false
+    // dsh 不走 tool status，单独判断
+    if (id === 'dsh') return true
+    if (healthyIds.length > 0) {
+      return healthyIds.includes(id)
+    }
+    return true
+  })
+
+  if (tryChain.length === 0) tryChain = ['dsh']
+
+  // 从用户指定的那个开始
+  const startIdx = Math.max(0, tryChain.indexOf(firstAdapterId))
+  tryChain = tryChain.slice(startIdx)
 
   // 如果只有 dsh 兜底，直接走 agent loop 模式
   if (tryChain.length === 0 || (tryChain.length === 1 && tryChain[0] === 'dsh')) {
@@ -326,6 +307,86 @@ function dispatchCodeWithFallback(firstAdapterId: string, text: string) {
   tryNext()
 }
 
+/**
+ * 研究/写作任务带降级的派发。
+ * Hermes → dsh agent loop
+ */
+async function dispatchResearchWithFallback(firstAdapterId: string, text: string) {
+  const healthyIds = await getHealthyToolIds()
+  const chain = getFallbackChain('research')
+
+  let tryChain = chain.filter(id => {
+    const adapter = get(id)
+    if (!adapter) return false
+    if (id === 'dsh') return true
+    if (healthyIds.length > 0) return healthyIds.includes(id)
+    return true
+  })
+  if (tryChain.length === 0) tryChain = ['dsh']
+
+  const startIdx = Math.max(0, tryChain.indexOf(firstAdapterId))
+  tryChain = tryChain.slice(startIdx)
+
+  // 逐个尝试
+  for (const adapterId of tryChain) {
+    const adapter = get(adapterId)
+    if (!adapter) continue
+
+    // dsh 走 agent loop
+    if (adapterId === 'dsh') {
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    // hermes 有 execute 能力 → 走异步派发
+    if (adapter.capabilities?.some(c => c.type === 'plan' || c.type === 'execute')) {
+      dispatchAsyncTask(adapterId, text)
+      busy.value = false
+      return
+    }
+
+    // 有 chat 能力的走聊天
+    if (adapter.chat) {
+      await runChatWithAdapter(adapterId, text)
+      busy.value = false
+      return
+    }
+  }
+
+  // 全挂了 → dsh 兜底
+  addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+  const loopId = entries.value[entries.value.length - 1].id
+  startAgentLoop(text, loopId)
+}
+
+/**
+ * 聊天任务降级：dsh → ling（本地模型兜底）
+ * 搜索增强也跟着降级（ling 本地模型不支持联网）。
+ */
+async function dispatchChatWithFallback(text: string) {
+  const chain = getFallbackChain('chat')
+
+  for (const adapterId of chain) {
+    const adapter = get(adapterId)
+    if (!adapter?.chat) continue
+
+    try {
+      await runChatWithAdapter(adapterId, text)
+      busy.value = false
+      return
+    } catch {
+      // 这个挂了，试下一个
+      continue
+    }
+  }
+
+  // 全挂了
+  addEntry('system', 'system', { content: '所有聊天通道都不可用。请检查模型连接。' })
+  busy.value = false
+}
+
 const convId = ref(localStorage.getItem('anvil.conv.current') || newConvId())
 const convList = ref(listConvs())
 
@@ -406,6 +467,46 @@ async function approvePlan(entry: TimelineEntry) {
     }
   } catch (e) {
     addEntry('system', 'dock', { content: `错误: ${e}` })
+  }
+  busy.value = false
+}
+
+// 本地编码审批 — 合并沙箱分支
+async function approveLocalCoding(entry: TimelineEntry) {
+  const branch = entry.data.branch as string
+  if (!branch) return
+  busy.value = true
+  addEntry('system', 'local-coding', { content: `合并分支 ${branch}...` })
+  try {
+    const adapter = get('local-coding')
+    if (adapter) {
+      const r = await adapter.execute('local', `approve ${branch}`)
+      addEntry(r.type, 'local-coding', r as unknown as Record<string, unknown>)
+      // 更新原 entry 状态
+      entry.data.status = 'approved'
+      entry.data.approved = true
+    }
+  } catch (e) {
+    addEntry('system', 'local-coding', { content: `合并失败: ${e}` })
+  }
+  busy.value = false
+}
+
+// 本地编码审批 — 丢弃沙箱分支
+async function discardLocalCoding(entry: TimelineEntry) {
+  const branch = entry.data.branch as string
+  if (!branch) return
+  busy.value = true
+  addEntry('system', 'local-coding', { content: `丢弃分支 ${branch}...` })
+  try {
+    const adapter = get('local-coding')
+    if (adapter) {
+      const r = await adapter.execute('local', `discard ${branch}`)
+      addEntry(r.type, 'local-coding', r as unknown as Record<string, unknown>)
+      entry.data.status = 'discarded'
+    }
+  } catch (e) {
+    addEntry('system', 'local-coding', { content: `丢弃失败: ${e}` })
   }
   busy.value = false
 }
@@ -651,7 +752,12 @@ function quickSend(text: string) {
   }
 }
 
-onMounted(() => { registerAllAdapters(); refreshTargetStatus() })
+onMounted(() => {
+  registerAllAdapters()
+  refreshTargetStatus()
+  // 预热工具状态（后台拉，不阻塞界面）
+  getHealthyToolIds().catch(() => {})
+})
 
 // 暴露给父组件
 defineExpose({
@@ -952,6 +1058,41 @@ onUnmounted(() => {
           <!-- 训练消息 -->
           <div v-else-if="entry.type === 'train'" class="train-text">
             {{ entry.data.content as string }}
+          </div>
+
+          <!-- 本地编码审批卡（diff + 合/弃按钮） -->
+          <div v-else-if="entry.type === 'approval'" class="approval-card"
+               :class="String(entry.data.status || 'awaiting-approval')">
+            <div class="task-header">
+              <span class="task-adapter">{{ entry.adapterId }}</span>
+              <span class="task-status" :class="String(entry.data.status || 'awaiting-approval')">
+                {{ entry.data.status === 'approved' ? '已合并' :
+                   entry.data.status === 'discarded' ? '已丢弃' :
+                   '待审批' }}
+              </span>
+            </div>
+            <div v-if="entry.data.title" class="task-title">{{ entry.data.title as string }}</div>
+            <div v-if="entry.data.branch" class="task-meta">
+              分支 {{ entry.data.branch }}
+              <span v-if="entry.data.fileCount"> · {{ entry.data.fileCount }} 个文件</span>
+            </div>
+            <!-- diff 折叠区 -->
+            <div v-if="entry.data.content" class="diff-block">
+              <div class="diff-toggle"
+                   @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('open')">
+                查看改动
+              </div>
+              <pre class="diff-body"><code>{{ entry.data.content as string }}</code></pre>
+            </div>
+            <!-- 操作按钮 -->
+            <div v-if="entry.data.status === 'awaiting-approval'" class="task-actions">
+              <button class="approve-btn" @click="approveLocalCoding(entry)">
+                合并到当前分支
+              </button>
+              <button class="secondary-btn" @click="discardLocalCoding(entry)">
+                丢弃改动
+              </button>
+            </div>
           </div>
 
           <!-- 其他执行消息 -->

@@ -42,6 +42,20 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import urlopen, Request
 
+# 工具健康检查模块
+try:
+    from tools_status import get_tools_status
+except ImportError:
+    get_tools_status = None
+
+# MCP client 管理器
+try:
+    from mcp_client import get_manager as get_mcp_manager
+    MCP_CLIENT_AVAILABLE = True
+except ImportError:
+    MCP_CLIENT_AVAILABLE = False
+    get_mcp_manager = None
+
 try:
     from deepseek_harness import DeepSeekHarness, estimate_cache_hit, __version__ as dsh_version
 except ImportError:
@@ -63,6 +77,33 @@ def _tavily_key() -> str:
             for line in f:
                 if line.startswith("TAVILY_API_KEY="):
                     return line.strip().split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
+
+def _get_key(name: str) -> str:
+    """读 API key：env → ~/.hermes/.env → ~/.zshrc 三路兜底。
+    sidecar 子进程不继承 shell export，必须显式兜底。"""
+    k = os.environ.get(name, "")
+    if k:
+        return k
+    # ~/.hermes/.env
+    try:
+        with open(os.path.expanduser("~/.hermes/.env")) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{name}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    # ~/.zshrc
+    try:
+        with open(os.path.expanduser("~/.zshrc")) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"export {name}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         pass
     return ""
@@ -95,6 +136,7 @@ INFERENCE_TARGETS: dict = {
     "siliconflow": "https://api.siliconflow.cn/v1",
     "openai": "https://api.openai.com/v1",
     "lmstudio": "http://localhost:1234/v1",
+    "volc-coding": "https://ark.cn-beijing.volces.com/api/coding/v3",
 }
 
 # 云端默认 model
@@ -102,13 +144,15 @@ _TARGET_MODELS = {
     "deepseek": "deepseek-chat",
     "siliconflow": "deepseek-ai/DeepSeek-V3",
     "openai": "gpt-4o-mini",
+    "volc-coding": "ark-code-latest",
 }
 
-# API key map for cloud targets
+# API key map for cloud targets（三路兜底：env → .hermes/.env → .zshrc）
 _TARGET_KEYS = {
-    "deepseek": os.getenv("DEEPSEEK_API_KEY", ""),
-    "siliconflow": os.getenv("SILICONFLOW_API_KEY", ""),
-    "openai": os.getenv("OPENAI_API_KEY", ""),
+    "deepseek": _get_key("DEEPSEEK_API_KEY"),
+    "siliconflow": _get_key("SILICONFLOW_API_KEY"),
+    "openai": _get_key("OPENAI_API_KEY"),
+    "volc-coding": _get_key("VOLC_ARK_CODING_KEY"),
 }
 
 
@@ -397,6 +441,12 @@ class Handler(BaseHTTPRequestHandler):
             }
             self._json(200, caps)
             return
+        if self.path == "/mcp/servers":
+            if MCP_CLIENT_AVAILABLE:
+                self._json(200, {"servers": get_mcp_manager().list_servers()})
+            else:
+                self._json(200, {"servers": [], "error": "mcp client not available"})
+            return
         if self.path == "/models":
             self._json(200, {"targets": INFERENCE_TARGETS, "current": getattr(Handler, "target", "")})
             return
@@ -411,6 +461,30 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/dsh/health":
             self._json(200, {"ok": True, "dsh": dsh_version, "agent_loop": True, "plugins": 0})
+            return
+        if self.path == "/tools/status":
+            if get_tools_status:
+                self._json(200, {"tools": get_tools_status(), "ts": time.time()})
+            else:
+                self._json(500, {"error": "tools_status module not available"})
+            return
+
+        # ===== MCP client =====
+        if self.path == "/mcp/servers":
+            if not MCP_CLIENT_AVAILABLE:
+                self._json(500, {"error": "mcp client not available"})
+                return
+            mgr = get_mcp_manager()
+            self._json(200, {"servers": mgr.list_servers()})
+            return
+
+        if self.path.startswith("/mcp/tools/"):
+            if not MCP_CLIENT_AVAILABLE:
+                self._json(500, {"error": "mcp client not available"})
+                return
+            name = self.path[len("/mcp/tools/"):]
+            mgr = get_mcp_manager()
+            self._json(200, {"name": name, "tools": mgr.get_tools(name)})
             return
         
         # ===== 异步 Agent 健康检查 =====
@@ -503,11 +577,115 @@ class Handler(BaseHTTPRequestHandler):
                     self._agent_approve()
                 else:
                     self._json(400, {"error": "sid required"})
+            elif self.path == "/mcp/connect":
+                self._mcp_connect()
+            elif self.path == "/mcp/disconnect":
+                self._mcp_disconnect()
+            elif self.path.startswith("/mcp/call/"):
+                self._mcp_call()
+            elif self.path == "/mcp/add":
+                self._mcp_add()
+            elif self.path == "/mcp/remove":
+                self._mcp_remove()
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:
             traceback.print_exc()
             self._json(500, {"error": str(e)})
+
+    # ---- MCP client ----
+    def _mcp_connect(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.connect(name)
+        if ok:
+            srv = mgr.get_tools(name)
+            self._json(200, {"ok": True, "name": name, "tools": srv})
+        else:
+            srv = [s for s in mgr.list_servers() if s["name"] == name]
+            err = srv[0].get("error", "connect failed") if srv else "server not found"
+            self._json(502, {"error": err})
+
+    def _mcp_disconnect(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.disconnect(name)
+        self._json(200, {"ok": ok, "name": name})
+
+    def _mcp_call(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        # 路径格式: /mcp/call/<name>/<tool>
+        parts = self.path.split("/")
+        if len(parts) < 5:
+            self._json(400, {"error": "path must be /mcp/call/<name>/<tool>"})
+            return
+        name = parts[3]
+        tool = parts[4]
+        body = self._read_body()
+        arguments = body.get("arguments") or {}
+        mgr = get_mcp_manager()
+        result = mgr.call_tool(name, tool, arguments)
+        self._json(200, result)
+
+    def _mcp_add(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        command = body.get("command", "")
+        args = body.get("args", [])
+        env = body.get("env", {})
+        if not name or not command:
+            self._json(400, {"error": "name and command required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.add_server(name, command, args, env)
+        self._json(200, {"ok": ok, "name": name})
+
+    def _mcp_remove(self):
+        if not MCP_CLIENT_AVAILABLE:
+            self._json(500, {"error": "mcp client not available"})
+            return
+        body = self._read_body()
+        name = body.get("name", "")
+        if not name:
+            self._json(400, {"error": "name required"})
+            return
+        mgr = get_mcp_manager()
+        ok = mgr.remove_server(name)
+        self._json(200, {"ok": ok, "name": name})
+
+    @staticmethod
+    def _run_async(coro) -> object:
+        """在事件循环里跑 async 协程（bridge 是线程模型，每次调用建临时 loop）。"""
+        import asyncio
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+        except RuntimeError:
+            # 已有 loop 的情况
+            import asyncio
+            return asyncio.get_event_loop().run_until_complete(coro)
 
     # ---- 异步 Agent 创建 ----
     def _agent_create(self, agent: str):
@@ -637,13 +815,13 @@ class Handler(BaseHTTPRequestHandler):
             if k in req:
                 kwargs[k] = req[k]
 
-        # fallback 链：主目标失败 → 依次尝试 deepseek/siliconflow
+        # fallback 链：主目标失败 → 依次尝试 deepseek/volc-coding/siliconflow
         t0 = time.time()
         result = None
         last_err = ""
         primary = req.get("model") or Handler.model_id
         attempts = [("", None)]  # 先用当前 harness
-        fallback_names = [n for n in ("deepseek", "siliconflow") if _TARGET_KEYS.get(n)]
+        fallback_names = [n for n in ("deepseek", "volc-coding", "siliconflow") if _TARGET_KEYS.get(n)]
         for fname in fallback_names:
             attempts.append((fname, INFERENCE_TARGETS[fname]))
 

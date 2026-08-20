@@ -65,11 +65,21 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
 // 编码任务降级链（按优先级从高到低）
 // 上一层全挂才降入下一层，用户不感知切换
 // 注意：claude 不进自动降级链（贵），只有用户明确指定 /claude 时才用
+// local-coding 不在自动降级链里——它只处理简单任务（通过 classifyTask 判断）
+// 复杂任务直接走云端链
 export const CODE_FALLBACK_CHAIN = [
   'pi',         // 第 1 层 — Pi 主力编码（RPC 流式）
   'codex',      // 第 2 层 — Codex 沙箱安全执行
   'reasonix',   // 第 3 层 — Reasonix（前缀缓存 + 子agent）
   'dsh',        // 第 4 层 — agent loop 兜底
+]
+
+// 简单编码任务降级链（本地模型优先，不行再上云端）
+export const SIMPLE_CODE_FALLBACK_CHAIN = [
+  'local-coding', // 第 1 层 — 本地模型（沙箱隔离，不花 token）
+  'pi',           // 第 2 层 — Pi 主力编码
+  'codex',        // 第 3 层 — Codex
+  'dsh',          // 第 4 层 — agent loop 兜底
 ]
 
 // 研究/写作任务降级链
@@ -176,7 +186,7 @@ export function listAvailableAdapters(): { id: string; name: string; description
   const categories: Record<string, string[]> = {
     'Agent 框架': ['dsh'],
     '云端编码': ['jules', 'claude', 'openclaw', 'codex'],
-    '本地编码': ['dock', 'reasonix', 'pi', 'hermes', 'antigravity'],
+    '本地编码': ['dock', 'reasonix', 'pi', 'hermes', 'antigravity', 'local-coding'],
     '研究写作': ['hermes'],
     '训练': ['unsloth'],
     '本地聊天': ['ling', 'ollama'],
@@ -199,12 +209,15 @@ export function listAvailableAdapters(): { id: string; name: string; description
 
 /**
  * 编码任务降级选择器。
- * 按 CODE_FALLBACK_CHAIN 顺序找第一个可用的 adapter。
+ * 按复杂度选降级链：
+ *   - 简单任务 → SIMPLE_CODE_FALLBACK_CHAIN（本地模型优先）
+ *   - 复杂任务 → CODE_FALLBACK_CHAIN（直接云端）
  * 如果用户显式指定了某个编码 agent（高置信度命中特定名称），优先用那个，但它挂了也会自动降级。
  */
 export function resolveCodeAdapter(
   intent: IntentGuess | null,
   availableIds?: string[],
+  prompt?: string,
 ): string {
   const allAdapters = all()
   const availSet = availableIds
@@ -216,27 +229,74 @@ export function resolveCodeAdapter(
   }
 
   // 用户明确点名了某个编码 agent → 优先尝试，但失败后也要降级
-  // （降级逻辑在调用方，这里只返回首选 + 完整链）
   if (intent?.category === 'code' && available(intent.adapterId)) {
     // 如果命中的就是降级链里的某个，从那个位置开始往下
-    const idx = CODE_FALLBACK_CHAIN.indexOf(intent.adapterId)
+    const chain = codeFallbackChainForPrompt(prompt, availSet, allAdapters)
+    const idx = chain.indexOf(intent.adapterId)
     if (idx >= 0) {
-      // 从命中的位置开始，找第一个可用的
-      for (let i = idx; i < CODE_FALLBACK_CHAIN.length; i++) {
-        if (available(CODE_FALLBACK_CHAIN[i])) return CODE_FALLBACK_CHAIN[i]
+      for (let i = idx; i < chain.length; i++) {
+        if (available(chain[i])) return chain[i]
       }
     }
     // 不在降级链里的（比如 claude），用户点了名就先用，但后面还能降级
     return intent.adapterId
   }
 
-  // 通用编码任务 → 按降级链找第一个可用的
-  for (const id of CODE_FALLBACK_CHAIN) {
+  // 通用编码任务 → 按复杂度选降级链
+  const chain = codeFallbackChainForPrompt(prompt, availSet, allAdapters)
+  for (const id of chain) {
     if (available(id)) return id
   }
 
   // 全都不可用 → 返回 dsh 兜底（调用方会处理失败）
   return 'dsh'
+}
+
+/** 根据 prompt 选择编码降级链（简单任务优先本地，复杂任务直接云端） */
+function codeFallbackChainForPrompt(
+  prompt: string | undefined,
+  _availSet: Set<string>,
+  _allAdapters: Adapter[],
+): string[] {
+  // 没有 prompt → 默认走云端链（安全）
+  if (!prompt) return CODE_FALLBACK_CHAIN
+
+  // 动态导入（避免循环依赖）
+  // 简单任务 → 本地优先
+  // 这里用内联判断，不直接 import 防止循环依赖
+  const isSimple = isSimpleTask(prompt)
+  return isSimple ? SIMPLE_CODE_FALLBACK_CHAIN : CODE_FALLBACK_CHAIN
+}
+
+/** 任务分级（与 local-coding-adapter 的 classifyTask 同逻辑，内联避免循环依赖） */
+function isSimpleTask(prompt: string): boolean {
+  const text = prompt.toLowerCase()
+  if (text.length > 300) return false
+
+  const complexKeywords = [
+    '重构', '架构', '系统', '框架', '跨文件', '多文件',
+    '新增功能', '新功能', '模块', '组件', '插件',
+    '数据库', '表', 'migration', 'api', '接口设计',
+    '部署', '发布', 'ci', '测试用例', '集成',
+    '登录', '鉴权', '权限', '支付',
+  ]
+  for (const kw of complexKeywords) {
+    if (text.includes(kw.toLowerCase())) return false
+  }
+
+  const simpleKeywords = [
+    '格式化', '格式调整', '美化', '缩进', '换行', '注释', '加注释',
+    '改个', '改一下', '调整', '修改', '替换', '重命名', '改名',
+    '文案', '标题', '改字', '改文字', '配置', '改配置', '常量',
+    '日志', '加个日志', 'debug', '打印', 'console.log',
+    '加个函数', '加个方法', '加个工具', '写个工具函数',
+  ]
+  for (const kw of simpleKeywords) {
+    if (text.includes(kw.toLowerCase())) return true
+  }
+
+  if (text.length < 20) return true
+  return false
 }
 
 /**
