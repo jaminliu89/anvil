@@ -1014,21 +1014,44 @@ onUnmounted(() => {
 
             <!-- 步骤时间轴 -->
             <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="loop-steps">
-              <div v-for="(step, idx) in (entry.data.steps as { id: string; title: string; status: string; content?: string; result?: unknown }[])"
+              <div v-for="(step, idx) in (entry.data.steps as any[])"
                    :key="step.id"
                    class="loop-step"
-                   :class="step.status">
+                   :class="[step.status, { 'has-agent': step.agent }]">
                 <div class="step-rail">
                   <span class="step-dot" :class="step.status"></span>
                   <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
                 </div>
                 <div class="step-body">
-                  <div class="step-title">{{ step.title }}</div>
+                  <div class="step-header">
+                    <div class="step-title">{{ step.title }}</div>
+                    <span v-if="step.agent" class="step-agent">{{ step.agent }}</span>
+                  </div>
                   <div v-if="step.content && step.id !== 'answer'" class="step-content">
                     {{ step.content }}
                   </div>
                   <div v-if="step.result && typeof step.result === 'string'" class="step-result">
                     {{ step.result }}
+                  </div>
+                  <!-- 子步骤（第二层） -->
+                  <div v-if="step.subSteps && step.subSteps.length" class="sub-steps">
+                    <div v-for="(sub, sidx) in step.subSteps"
+                         :key="sub.id"
+                         class="sub-step"
+                         :class="sub.status">
+                      <div class="sub-rail">
+                        <span class="sub-dot" :class="sub.status"></span>
+                        <span v-if="sidx < step.subSteps.length - 1" class="sub-line"></span>
+                      </div>
+                      <div class="sub-body">
+                        <div class="sub-title">
+                          {{ sub.title }}
+                          <span v-if="sub.agent" class="sub-agent">{{ sub.agent }}</span>
+                        </div>
+                        <div v-if="sub.content" class="sub-content">{{ sub.content }}</div>
+                        <div v-if="sub.result && typeof sub.result === 'string'" class="sub-result">{{ sub.result }}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1524,6 +1547,101 @@ onUnmounted(() => {
 .secondary-btn:hover {
   border-color: var(--ink3);
   color: var(--ink);
+}
+
+/* ── 审批卡（本地编码沙箱）── */
+.approval-card {
+  max-width: 92%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.approval-card .task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.approval-card .task-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink2);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.approval-card .task-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--line);
+  color: var(--ink2);
+}
+.approval-card .task-status.awaiting-approval {
+  background: rgba(200, 160, 60, 0.12);
+  color: var(--warn, #b8860b);
+}
+.approval-card .task-status.approved {
+  background: rgba(60, 160, 120, 0.12);
+  color: var(--signal, #2e7d52);
+}
+.approval-card .task-status.discarded {
+  background: var(--line);
+  color: var(--ink3);
+}
+.approval-card .task-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.approval-card .task-meta {
+  font-size: 12px;
+  color: var(--ink3);
+  font-family: var(--mono);
+  margin-bottom: 10px;
+}
+.diff-block {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.diff-toggle {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink2);
+  cursor: pointer;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.diff-toggle:hover {
+  color: var(--ink);
+}
+.diff-body {
+  display: none;
+  margin: 0;
+  padding: 12px;
+  font-size: 11px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  color: var(--ink2);
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-block .diff-body.open {
+  display: block;
+}
+.approval-card .task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* ── Agent Loop 任务卡（时间轴式） ── */
