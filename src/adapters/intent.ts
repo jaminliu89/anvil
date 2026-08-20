@@ -41,12 +41,12 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
   { pattern: /(gemini.*code|google.*code)/i, adapterId: 'dsh', command: 'dsh', reason: 'Gemini 编码任务', confidence: 0.8, category: 'code' },
 
   // === 编码类（通用触发词）===
-  { pattern: /(改.*代码|代码.*有问题|代码.*报错|代码.*bug|代码.*修复|代码.*重构|代码.*优化)/i, adapterId: 'dsh', command: 'dsh', reason: '代码修改任务', confidence: 0.82, category: 'code' },
-  { pattern: /(写.*函数|写.*脚本|写.*代码|实现.*功能|生成.*代码|coding|写个.*程序|写个.*工具)/i, adapterId: 'dsh', command: 'dsh', reason: '写代码任务', confidence: 0.78, category: 'code' },
-  { pattern: /(debug|调试|排错|定位.*bug|找.*bug)/i, adapterId: 'dsh', command: 'dsh', reason: '调试排错', confidence: 0.8, category: 'code' },
-  { pattern: /(refactor|重构|优化.*性能|优化.*代码|代码.*清理)/i, adapterId: 'dsh', command: 'dsh', reason: '代码重构', confidence: 0.76, category: 'code' },
-  { pattern: /(用.*(python|js|ts|java|go|rust|c\+\+|cpp|ruby|php|swift|kotlin).*(写|实现|做))/i, adapterId: 'dsh', command: 'dsh', reason: '写代码任务', confidence: 0.8, category: 'code' },
-  { pattern: /(快速排序|冒泡排序|二叉树|链表|算法题|leetcode|力扣|算法.*实现)/i, adapterId: 'dsh', command: 'dsh', reason: '算法实现', confidence: 0.75, category: 'code' },
+  { pattern: /(改.*代码|代码.*有问题|代码.*报错|代码.*bug|代码.*修复|代码.*重构|代码.*优化)/i, adapterId: 'pi', command: 'pi', reason: '代码修改任务', confidence: 0.82, category: 'code' },
+  { pattern: /(写.*函数|写.*脚本|写.*代码|实现.*功能|生成.*代码|coding|写个.*程序|写个.*工具)/i, adapterId: 'pi', command: 'pi', reason: '写代码任务', confidence: 0.78, category: 'code' },
+  { pattern: /(debug|调试|排错|定位.*bug|找.*bug)/i, adapterId: 'pi', command: 'pi', reason: '调试排错', confidence: 0.8, category: 'code' },
+  { pattern: /(refactor|重构|优化.*性能|优化.*代码|代码.*清理)/i, adapterId: 'pi', command: 'pi', reason: '代码重构', confidence: 0.76, category: 'code' },
+  { pattern: /(用.*(python|js|ts|java|go|rust|c\+\+|cpp|ruby|php|swift|kotlin).*(写|实现|做))/i, adapterId: 'pi', command: 'pi', reason: '写代码任务', confidence: 0.8, category: 'code' },
+  { pattern: /(快速排序|冒泡排序|二叉树|链表|算法题|leetcode|力扣|算法.*实现)/i, adapterId: 'pi', command: 'pi', reason: '算法实现', confidence: 0.75, category: 'code' },
 
   // === 研究/搜索类 ===
   { pattern: /(分析|研究|调研|对比|查一下|搜索|新闻|最新|最近.*进展|行业.*报告|市场.*分析)/i, adapterId: 'dsh', command: 'dsh', reason: '多步分析研究', confidence: 0.72, category: 'research' },
@@ -64,14 +64,28 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
 
 // 编码任务降级链（按优先级从高到低）
 // 上一层全挂才降入下一层，用户不感知切换
+// 注意：claude 不进自动降级链（贵），只有用户明确指定 /claude 时才用
 export const CODE_FALLBACK_CHAIN = [
-  'codex',      // 第 1 层 — 最强代码大脑
-  'pi',         // 第 2 层 — 轻量编码
-  'dsh',        // 第 3 层 — agent loop 兜底
+  'pi',         // 第 1 层 — Pi 主力编码（RPC 流式）
+  'codex',      // 第 2 层 — Codex 沙箱安全执行
+  'reasonix',   // 第 3 层 — Reasonix（前缀缓存 + 子agent）
+  'dsh',        // 第 4 层 — agent loop 兜底
 ]
 
-// 兜底聊天 adapter 顺序（优先用能力最强的、可用的）
-const CHAT_FALLBACK = ['dsh', 'ling']
+// 研究/写作任务降级链
+export const RESEARCH_FALLBACK_CHAIN = [
+  'hermes',     // 第 1 层 — Hermes（深度研究 + 记忆 + 技能）
+  'dsh',        // 第 2 层 — agent loop 兜底
+]
+
+// 聊天任务降级链
+export const CHAT_FALLBACK_CHAIN = [
+  'dsh',        // 第 1 层 — DSH bridge（云端模型 + 搜索增强）
+  'ling',       // 第 2 层 — 本地模型离线兜底
+]
+
+// 兜底聊天 adapter 顺序（兼容旧引用）
+const CHAT_FALLBACK = CHAT_FALLBACK_CHAIN
 
 /**
  * 猜测意图并返回最佳匹配。
@@ -212,7 +226,7 @@ export function resolveCodeAdapter(
         if (available(CODE_FALLBACK_CHAIN[i])) return CODE_FALLBACK_CHAIN[i]
       }
     }
-    // 不在降级链里的（比如 claude、reasonix），用户点了名就先用，但后面还能降级
+    // 不在降级链里的（比如 claude），用户点了名就先用，但后面还能降级
     return intent.adapterId
   }
 
@@ -240,4 +254,115 @@ export function getCodeFallbackChain(availableIds?: string[]): string[] {
   }
 
   return CODE_FALLBACK_CHAIN.filter(available)
+}
+
+/**
+ * 研究/写作任务的降级选择器。
+ * Hermes → dsh
+ */
+export function resolveResearchAdapter(
+  intent: IntentGuess | null,
+  availableIds?: string[],
+): string {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  // 用户明确点名了 → 优先用
+  if (intent?.category === 'research' && available(intent.adapterId)) {
+    return intent.adapterId
+  }
+
+  for (const id of RESEARCH_FALLBACK_CHAIN) {
+    if (available(id)) return id
+  }
+  return 'dsh'
+}
+
+export function getResearchFallbackChain(availableIds?: string[]): string[] {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  return RESEARCH_FALLBACK_CHAIN.filter(available)
+}
+
+/**
+ * 聊天任务的降级选择器。
+ * dsh → ling（本地模型兜底）
+ */
+export function resolveChatAdapter(availableIds?: string[]): string {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  for (const id of CHAT_FALLBACK_CHAIN) {
+    if (available(id)) return id
+  }
+  return 'ling'
+}
+
+export function getChatFallbackChain(availableIds?: string[]): string[] {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  return CHAT_FALLBACK_CHAIN.filter(available)
+}
+
+/**
+ * 通用解析：按 category 自动选对应降级链的第一个可用 adapter。
+ */
+export function resolveAdapter(
+  category: IntentGuess['category'],
+  intent: IntentGuess | null,
+  availableIds?: string[],
+): string {
+  switch (category) {
+    case 'code':
+      return resolveCodeAdapter(intent, availableIds)
+    case 'research':
+      return resolveResearchAdapter(intent, availableIds)
+    case 'chat':
+    default:
+      return resolveChatAdapter(availableIds)
+  }
+}
+
+/**
+ * 获取某个 category 的完整降级链。
+ */
+export function getFallbackChain(
+  category: IntentGuess['category'],
+  availableIds?: string[],
+): string[] {
+  switch (category) {
+    case 'code':
+      return getCodeFallbackChain(availableIds)
+    case 'research':
+      return getResearchFallbackChain(availableIds)
+    case 'chat':
+    default:
+      return getChatFallbackChain(availableIds)
+  }
 }

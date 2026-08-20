@@ -2,6 +2,7 @@
 // 注册插件、commands、系统托盘、全局快捷键
 
 pub mod dsh;
+pub mod pi;
 pub mod tray;
 pub mod shortcuts;
 pub mod system_commands;
@@ -27,6 +28,11 @@ pub fn run() {
             dsh::commands::dsh_stop,
             dsh::commands::dsh_status,
             dsh::commands::dsh_set_target,
+            pi::commands::pi_start,
+            pi::commands::pi_stop,
+            pi::commands::pi_status,
+            pi::commands::pi_send_prompt,
+            pi::commands::pi_check_installed,
             system_commands::toggle_window,
             system_commands::quit_app,
         ])
@@ -43,6 +49,9 @@ pub fn run() {
 
             // 初始化 sidecar 管理器（守卫服务）
             dsh::manager::init(handle)?;
+
+            // 初始化 Pi 管理器（按需启动）
+            pi::manager::init(handle)?;
 
             // 系统托盘
             tray::create_tray(handle)?;
