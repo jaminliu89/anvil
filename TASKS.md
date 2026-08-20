@@ -56,4 +56,4 @@
 - [x] T7.15 异步任务实时进度轮询（每 10s 前端轮询 status 更新卡片）
 - [x] T7.16 Jules 完整流程（new→list→pull，bridge subprocess 代理）
 - [x] T7.17 Antigravity (agy) 本地实时编码 adapter
-- [ ] T7.18 多任务队列视图（左侧栏增强，展示所有运行中任务）
+- [x] T7.18 多任务队列视图（左侧栏增强，展示所有运行中任务）

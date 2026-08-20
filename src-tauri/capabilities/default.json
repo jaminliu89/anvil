@@ -13,6 +13,8 @@
     "autostart:default",
     "store:default",
     "window-state:default",
+    "window:default",
+    "window:allow-start-dragging",
     "dialog:allow-open",
     "dialog:allow-message"
   ]

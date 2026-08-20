@@ -2,7 +2,7 @@
 // 走 bridge HTTP API，SSE 流式输出 agent loop 过程
 // v2: 多轮 action plan + reasoning 流式 + fetch 工具
 
-import type { Adapter, ExecutionResult } from './types'
+import type { Adapter, ExecutionResult, ChatResult, Message, ChatOpts } from './types'
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
@@ -29,6 +29,7 @@ export const dshAdapter: Adapter = {
   description: 'Agent 框架平台。agent loop + 联网搜索 + 多步骤执行。',
   commands: ['dsh'],
   capabilities: [
+    { type: 'chat', provider: 'sync', description: '普通聊天（守卫化对话）' },
     { type: 'agent-loop', provider: 'async', description: '多步骤 agent loop，自动决定是否联网搜索' },
     { type: 'inspect', provider: 'sync', description: '服务状态检查' },
   ],
@@ -60,6 +61,45 @@ export const dshAdapter: Adapter = {
       return { available: true, healthy: res.ok, message: 'bridge 运行中' }
     } catch {
       return { available: true, healthy: false, message: 'bridge 未启动（python3 bridge.py --port 18443）' }
+    }
+  },
+
+  // 普通聊天（守卫化对话，带搜索增强）
+  async chat(history: Message[], text: string, opts?: ChatOpts & { search?: boolean }): Promise<ChatResult> {
+    const messages = history.slice(-20).map(m => ({ role: m.role, content: m.content }))
+    messages.push({ role: 'user', content: text })
+    
+    try {
+      const res = await fetch(`${BRIDGE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages,
+          search: opts?.search !== false,
+          max_tokens: opts?.maxTokens,
+          temperature: opts?.temperature,
+        }),
+        signal: AbortSignal.timeout(60000),
+      })
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`对话失败 (${res.status}): ${errText.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      return {
+        content: data.message?.content || data.content || '',
+        reasoning: data.message?.reasoning_content || data.reasoning || '',
+        usage: {
+          totalTokens: data.usage?.total_tokens,
+          cacheHitRate: data.usage?.cache_hit_rate,
+          elapsedMs: data.elapsed_s ? data.elapsed_s * 1000 : undefined,
+        },
+      }
+    } catch (e) {
+      return {
+        content: `抱歉，暂时无法回复：${(e as Error).message}`,
+        reasoning: '',
+      }
     }
   },
 }

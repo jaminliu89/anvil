@@ -164,6 +164,24 @@ function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | nu
     !hasLoop &&
     (intent?.category === 'code' || intent?.category === 'research')
 
+  // DSH 特殊路由：简单聊天走 chat，复杂多步任务走 agent loop
+  if (adapterId === 'dsh') {
+    const isComplex = intent?.category === 'code' || intent?.category === 'research' ||
+      /(分析|研究|对比|调研|帮我.*一下|查一下|搜索|最新|新闻)/.test(text)
+    if (isComplex && hasLoop) {
+      addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+    } else if (adapter.chat) {
+      runChatWithAdapter(adapterId, text)
+      busy.value = false
+    } else {
+      addEntry('system', 'system', { content: 'DSH 服务异常，请检查 bridge 是否启动' })
+      busy.value = false
+    }
+    return
+  }
+
   if (hasLoop) {
     // agent loop = 同步多步
     addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
