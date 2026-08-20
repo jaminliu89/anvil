@@ -49,6 +49,96 @@ def _format_tools_schema():
 
 # ===== 内置工具 =====
 
+
+def tool_init_project(params):
+    """初始化项目仓库 + 文档体系（Anvil 铁律：任务先建仓再干活）"""
+    import subprocess as _sp
+    name = params.get("name", "")
+    requirements = params.get("requirements", "")
+    base_dir = params.get("base_dir", os.path.expanduser("~/ScriptHub"))
+    if not name:
+        return "错误: 缺少 name 参数（项目名称）"
+    slug = re.sub(r"[^a-z0-9-]", "-", name.lower().strip())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    if not slug:
+        slug = f"project-{int(time.time())}"
+    proj_path = os.path.join(base_dir, slug)
+    if os.path.exists(proj_path):
+        return f"仓库已存在: {proj_path}，直接复用"
+    try:
+        os.makedirs(os.path.join(proj_path, "docs"), exist_ok=True)
+        os.makedirs(os.path.join(proj_path, "prototype"), exist_ok=True)
+        os.makedirs(os.path.join(proj_path, "src"), exist_ok=True)
+        prd = f"""# {name} — 产品需求文档
+
+## 一句话定位
+{requirements or "（待补充）"}
+
+## 目标用户
+（待补充）
+
+## 核心功能（MVP 裁剪）
+1. （待补充）
+
+## 非目标（明确不做）
+- （待补充）
+
+## 验收标准
+- （待补充）
+"""
+        open(os.path.join(proj_path, "docs", "PRD.md"), "w").write(prd)
+        agents_md = """# AGENTS.md — 项目开发宪章
+
+## 铁律
+1. 任务开始先更新 PROGRESS.md，明确本轮范围
+2. 改动前定范围：改什么/不改什么/验收标准
+3. 改完必须验证：语法检查 + 运行 + 记录结果到 PROGRESS.md
+4. 每步完成 git commit（坏了可回滚），禁止 --force 和攒着改
+5. 报错先记 ERRORS.md 再修，修完标注解决方式
+6. 遇到需求漂移（连续 3 次改视觉/样式）硬停机，重新锚定需求
+7. 一个功能做完立刻验证，不攒着；不复盘=没完成
+
+## 文档地图
+- docs/PRD.md — 产品定义（需求、范围、验收）
+- docs/PROGRESS.md — 进度日志（每轮改动的记录）
+- docs/ERRORS.md — 报错档案（问题、原因、解决方式）
+- docs/MASTER-TASK.md — 全量任务清单（总览 + 状态）
+- prototype/ — HTML 原型（视觉验证用）
+- src/ — 源码
+
+## 工作流
+需求 → PRD 确认 → 原型 → 开发 → 验证 → 进度记录 → commit
+"""
+        open(os.path.join(proj_path, "AGENTS.md"), "w").write(agents_md)
+        mt = f"""# {name} — Master Task
+
+## Phase 1: MVP（当前）
+- [ ] T1. 需求确认与 PRD 定稿 ({requirements or "待补充"})
+- [ ] T2. 原型设计（prototype/）
+- [ ] T3. 核心功能开发
+- [ ] T4. 验证与修复
+- [ ] T5. 演示交付
+
+## 后续（Roadmap 门——用户明确要求才展开）
+- （待定）
+"""
+        open(os.path.join(proj_path, "docs", "MASTER-TASK.md"), "w").write(mt)
+        prog = """# 进度日志
+
+## 2026-08-20 项目初始化
+- [x] 仓库创建
+- [x] 文档体系搭建（PRD / AGENTS / MASTER-TASK / PROGRESS / ERRORS）
+- [ ] 第一轮开发（待开始）
+"""
+        open(os.path.join(proj_path, "docs", "PROGRESS.md"), "w").write(prog)
+        open(os.path.join(proj_path, "docs", "ERRORS.md"), "w").write("# 报错档案\n\n（暂无）\n")
+        _sp.run(["git", "init"], cwd=proj_path, capture_output=True, timeout=10)
+        _sp.run(["git", "add", "-A"], cwd=proj_path, capture_output=True, timeout=10)
+        _sp.run(["git", "commit", "-m", "chore: 项目初始化（文档体系）"], cwd=proj_path, capture_output=True, timeout=10)
+        return f"仓库已创建: {proj_path}\n文档体系: docs/PRD.md, docs/MASTER-TASK.md, docs/PROGRESS.md, docs/ERRORS.md, AGENTS.md, prototype/"
+    except Exception as e:
+        return f"初始化失败: {e}"
+
 def tool_search(params):
     query = params.get("query", "")
     count = min(int(params.get("count", 5)), 10)
@@ -155,6 +245,12 @@ def register_default_tools():
         {"path": {"type": "string", "required": True, "description": "文件路径"},
          "content": {"type": "string", "required": True, "description": "要写入的完整内容"}},
         tool_write_file)
+    register_tool("init_project", "初始化一个新项目仓库，创建完整文档体系（PRD、AGENTS.md、MASTER-TASK、PROGRESS、ERRORS）+ git init。Anvil 铁律：项目开始先建仓。",
+        {"name": {"type": "string", "required": True, "description": "项目名称"},
+         "requirements": {"type": "string", "required": False, "description": "项目需求简述"},
+         "base_dir": {"type": "string", "required": False, "description": "仓库所在目录，默认 ~/ScriptHub"}},
+        tool_init_project)
+
 
 
 # ===== SSE 流式调用（原生，绕开 harness 过滤） =====

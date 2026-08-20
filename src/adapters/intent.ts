@@ -62,6 +62,14 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
   { pattern: /.{50,}/s, adapterId: 'dsh', command: 'dsh', reason: '复杂任务，多步处理更稳', confidence: 0.55, category: 'research' },
 ]
 
+// 编码任务降级链（按优先级从高到低）
+// 上一层全挂才降入下一层，用户不感知切换
+export const CODE_FALLBACK_CHAIN = [
+  'codex',      // 第 1 层 — 最强代码大脑
+  'pi',         // 第 2 层 — 轻量编码
+  'dsh',        // 第 3 层 — agent loop 兜底
+]
+
 // 兜底聊天 adapter 顺序（优先用能力最强的、可用的）
 const CHAT_FALLBACK = ['dsh', 'ling']
 
@@ -173,4 +181,63 @@ export function listAvailableAdapters(): { id: string; name: string; description
   }
 
   return result
+}
+
+/**
+ * 编码任务降级选择器。
+ * 按 CODE_FALLBACK_CHAIN 顺序找第一个可用的 adapter。
+ * 如果用户显式指定了某个编码 agent（高置信度命中特定名称），优先用那个，但它挂了也会自动降级。
+ */
+export function resolveCodeAdapter(
+  intent: IntentGuess | null,
+  availableIds?: string[],
+): string {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  // 用户明确点名了某个编码 agent → 优先尝试，但失败后也要降级
+  // （降级逻辑在调用方，这里只返回首选 + 完整链）
+  if (intent?.category === 'code' && available(intent.adapterId)) {
+    // 如果命中的就是降级链里的某个，从那个位置开始往下
+    const idx = CODE_FALLBACK_CHAIN.indexOf(intent.adapterId)
+    if (idx >= 0) {
+      // 从命中的位置开始，找第一个可用的
+      for (let i = idx; i < CODE_FALLBACK_CHAIN.length; i++) {
+        if (available(CODE_FALLBACK_CHAIN[i])) return CODE_FALLBACK_CHAIN[i]
+      }
+    }
+    // 不在降级链里的（比如 claude、reasonix），用户点了名就先用，但后面还能降级
+    return intent.adapterId
+  }
+
+  // 通用编码任务 → 按降级链找第一个可用的
+  for (const id of CODE_FALLBACK_CHAIN) {
+    if (available(id)) return id
+  }
+
+  // 全都不可用 → 返回 dsh 兜底（调用方会处理失败）
+  return 'dsh'
+}
+
+/**
+ * 编码任务的完整降级链（按顺序）。
+ * 调用方可以用这个列表逐个尝试，直到一个成功。
+ */
+export function getCodeFallbackChain(availableIds?: string[]): string[] {
+  const allAdapters = all()
+  const availSet = availableIds
+    ? new Set(availableIds)
+    : new Set(allAdapters.map(a => a.id))
+
+  function available(id: string): boolean {
+    return availSet.has(id) && allAdapters.some(a => a.id === id)
+  }
+
+  return CODE_FALLBACK_CHAIN.filter(available)
 }

@@ -4,7 +4,7 @@ import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
-import { guessIntent } from '@/adapters/intent'
+import { guessIntent, resolveCodeAdapter, getCodeFallbackChain } from '@/adapters/intent'
 import { useTaskQueueStore } from '@/stores/task-queue'
 import { useSettingsStore } from '@/stores/settings'
 import type { Parsed } from '@/adapters/parse'
@@ -144,14 +144,30 @@ function dispatchAsyncTask(adapterId: string, text: string) {
   })
 }
 
-/** 统一调度入口 — 根据意图选最合适的执行方式 */
+/** 统一调度入口 — 根据意图选最合适的执行方式
+ *  编码类任务走降级链：Codex → Pi → dsh，挂了自动切下一个
+ */
 function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | null) {
-  const adapterId = intent?.adapterId && intent.adapterId !== 'system'
-    ? intent.adapterId
-    : DEFAULT_ADAPTER
-  const adapter = get(adapterId)
+  // 编码类任务 → 走降级链选 adapter
+  const isCodeTask = intent?.category === 'code'
+  let adapterId = DEFAULT_ADAPTER
 
-  // 没找到目标 adapter → 兜底 dsh
+  if (isCodeTask) {
+    adapterId = resolveCodeAdapter(intent || null)
+  } else if (intent?.adapterId && intent.adapterId !== 'system') {
+    adapterId = intent.adapterId
+  }
+
+  let adapter = get(adapterId)
+
+  // 没找到目标 adapter → 如果是编码任务，走降级链挨个试
+  if (!adapter && isCodeTask) {
+    const chain = getCodeFallbackChain()
+    const fallbackId = chain[0] || 'dsh'
+    adapter = get(fallbackId)
+    adapterId = fallbackId
+  }
+
   if (!adapter) {
     const fallback = get('dsh') || all()[0]
     addEntry('system', 'system', { content: intent?.adapterName ? `${intent.adapterName} 暂不可用，由 Agent Loop 接手` : '正在处理...' })
@@ -166,6 +182,13 @@ function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | nu
   const isAsyncCode = adapter.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') &&
     !hasLoop &&
     (intent?.category === 'code' || intent?.category === 'research')
+
+  // 编码任务 + 异步执行 → 包一层带自动降级的派发
+  if (isCodeTask && isAsyncCode) {
+    dispatchCodeWithFallback(adapterId, text)
+    busy.value = false
+    return
+  }
 
   // DSH 特殊路由：简单聊天走 chat，复杂多步任务走 agent loop
   if (adapterId === 'dsh') {
@@ -205,6 +228,102 @@ function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | nu
     const loopId = entries.value[entries.value.length - 1].id
     startAgentLoop(text, loopId)
   }
+}
+
+/**
+ * 编码任务带降级的派发。
+ * 从当前 adapter 开始，按降级链逐个尝试，第一个成功的就是最终结果。
+ * 用户只看到结果，不感知切换了几个。
+ */
+function dispatchCodeWithFallback(firstAdapterId: string, text: string) {
+  const chain = getCodeFallbackChain()
+  // 从用户指定的那个开始（或默认从第一个开始）
+  const startIdx = Math.max(0, chain.indexOf(firstAdapterId))
+  const tryChain = chain.slice(startIdx)
+
+  // 如果只有 dsh 兜底，直接走 agent loop 模式
+  if (tryChain.length === 0 || (tryChain.length === 1 && tryChain[0] === 'dsh')) {
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+    return
+  }
+
+  // 先创建任务卡片
+  addEntry('plan', tryChain[0], {
+    title: text.slice(0, 60),
+    content: text,
+    status: 'running',
+    steps: [{ id: 's0', title: '执行中...', status: 'running' }],
+    sessionId: '',
+  })
+  const entryId = entries.value[entries.value.length - 1].id
+
+  // 逐个尝试
+  let tryIndex = 0
+  function tryNext() {
+    if (tryIndex >= tryChain.length) {
+      // 全挂了，兜底 agent loop
+      updateEntryData(entryId, {
+        status: 'error',
+        error: '所有编码 agent 都不可用，改由 Agent Loop 处理',
+        steps: [{ id: 'err', title: '全部不可用', status: 'failed' }],
+      })
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    const adapterId = tryChain[tryIndex]
+    const adapter = get(adapterId)
+    if (!adapter) { tryIndex++; tryNext(); return }
+
+    // dsh 兜底走 agent loop
+    if (adapterId === 'dsh') {
+      updateEntryData(entryId, {
+        status: 'done',
+        steps: [{ id: 'done', title: '已转 Agent Loop', status: 'done' }],
+      })
+      addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+      const loopId = entries.value[entries.value.length - 1].id
+      startAgentLoop(text, loopId)
+      return
+    }
+
+    // 同步编码执行（codex/pi 都是 execute 方法，同步返回结果）
+    adapter.execute(adapter.commands?.[0] || adapterId, text).then(result => {
+      if (result.type === 'system') {
+        // system 类型 = 失败/报错，试下一个
+        tryIndex++
+        tryNext()
+      } else {
+        // 成功了
+        updateEntryData(entryId, {
+          ...result,
+          adapterId,
+          status: 'done',
+          steps: [{ id: 'done', title: '完成', status: 'done' }],
+        })
+        // 注册到任务队列
+        const queue = useTaskQueueStore()
+        queue.addOrUpdate({
+          id: entryId,
+          entryId,
+          adapterId,
+          title: text.slice(0, 30),
+          sessionId: '',
+          status: 'done',
+          createdAt: Date.now(),
+        })
+      }
+    }).catch(() => {
+      tryIndex++
+      tryNext()
+    })
+  }
+
+  tryNext()
 }
 
 const convId = ref(localStorage.getItem('anvil.conv.current') || newConvId())
