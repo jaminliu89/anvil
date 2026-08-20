@@ -37,7 +37,8 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
   { pattern: /(codex|沙箱执行|安全执行|隔离执行)/i, adapterId: 'codex', command: 'codex', reason: 'Codex 沙箱编码', confidence: 0.88, category: 'code' },
   { pattern: /(pi |\/pi|非交互|批量执行|一次性跑)/i, adapterId: 'pi', command: 'pi', reason: 'Pi 非交互编码', confidence: 0.82, category: 'code' },
   { pattern: /(hermes.*改|hermes.*代码|用.*hermes.*写)/i, adapterId: 'hermes', command: 'hermes', reason: 'Hermes 编码任务', confidence: 0.8, category: 'code' },
-  { pattern: /(antigravity|agy|gemini.*code|google.*code)/i, adapterId: 'dsh', command: 'dsh', reason: 'Gemini 编码任务', confidence: 0.8, category: 'code' },
+  { pattern: /(antigravity|agy|gemini.*配对|agy.*本地|本地.*实时|实时编程|电脑.*权限)/i, adapterId: 'antigravity', command: 'agy', reason: 'Antigravity 本地编码', confidence: 0.92, category: 'code' },
+  { pattern: /(gemini.*code|google.*code)/i, adapterId: 'dsh', command: 'dsh', reason: 'Gemini 编码任务', confidence: 0.8, category: 'code' },
 
   // === 编码类（通用触发词）===
   { pattern: /(改.*代码|代码.*有问题|代码.*报错|代码.*bug|代码.*修复|代码.*重构|代码.*优化)/i, adapterId: 'dsh', command: 'dsh', reason: '代码修改任务', confidence: 0.82, category: 'code' },
@@ -153,7 +154,7 @@ export function listAvailableAdapters(): { id: string; name: string; description
   const categories: Record<string, string[]> = {
     'Agent 框架': ['dsh'],
     '云端编码': ['jules', 'claude', 'openclaw', 'codex'],
-    '本地编码': ['dock', 'reasonix', 'pi', 'hermes'],
+    '本地编码': ['dock', 'reasonix', 'pi', 'hermes', 'antigravity'],
     '研究写作': ['hermes'],
     '训练': ['unsloth'],
     '本地聊天': ['ling', 'ollama'],

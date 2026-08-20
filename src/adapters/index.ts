@@ -11,6 +11,7 @@ import { openclawAdapter } from './openclaw-adapter'
 import { reasonixAdapter } from './reasonix-adapter'
 import { piAdapter } from './pi-adapter'
 import { hermesAdapter } from './hermes-adapter'
+import { antigravityAdapter } from './antigravity-adapter'
 import { dshAdapter } from './dsh-adapter'
 import { unslothAdapter } from './unsloth-adapter'
 
@@ -34,6 +35,7 @@ export function registerAllAdapters() {
   register(reasonixAdapter)
   register(piAdapter)
   register(hermesAdapter)
+  register(antigravityAdapter)
 
   // —— 训练 ——
   register(unslothAdapter)

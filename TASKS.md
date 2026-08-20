@@ -53,5 +53,7 @@
 - [x] T7.12 Hermes Agent adapter（bridge 代理 + 意图识别 + 研究写作路由）
 - [x] T7.13 Ollama adapter（本地模型聊天兜底）
 - [x] T7.14 Bridge 异步 Agent 任务管理器（统一生命周期：create→status→log→approve）
-- [ ] T7.15 异步任务实时进度轮询（前端定时拉状态更新卡片）
-- [ ] T7.16 多任务队列视图（左侧栏增强，展示所有运行中任务）
+- [x] T7.15 异步任务实时进度轮询（每 10s 前端轮询 status 更新卡片）
+- [x] T7.16 Jules 完整流程（new→list→pull，bridge subprocess 代理）
+- [x] T7.17 Antigravity (agy) 本地实时编码 adapter
+- [ ] T7.18 多任务队列视图（左侧栏增强，展示所有运行中任务）

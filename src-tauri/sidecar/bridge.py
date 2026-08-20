@@ -519,10 +519,83 @@ class Handler(BaseHTTPRequestHandler):
         if agent == 'jules':
             import subprocess
             try:
-                proc = subprocess.Popen(['jules', 'new', prompt], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                proc = subprocess.Popen(['jules', 'new', prompt], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
                 out, _ = proc.communicate(timeout=30)
+                log = f"jules new 输出:\n{out}\n"
                 sid = f"jules-{int(time.time())}"
-                self._json(200, {"sid": sid, "status": "awaiting-approval", "steps": [{"id": "s0", "title": "计划已生成", "status": "pending"}], "approved": False, "message": out[:500]})
+                # 查找最新 session ID
+                try:
+                    list_proc = subprocess.Popen(['jules', 'remote', 'list', '--session'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                    list_out, _ = list_proc.communicate(timeout=15)
+                    log += f"jules list:\n{list_out}\n"
+                    for line in list_out.split('\n'):
+                        if line.strip() and not line.startswith('Usage') and not line.startswith('No'):
+                            parts = line.strip().split()
+                            if parts and len(parts) >= 1 and len(parts[0]) > 8:
+                                sid = parts[0].strip()
+                                break
+                except Exception:
+                    pass
+                with TASK_MANAGER._lock:
+                    TASK_MANAGER.tasks[sid] = {
+                        'sid': sid, 'agent': 'jules', 'prompt': prompt, 'repo': '',
+                        'state': 'running',
+                        'steps': [
+                            {'id': 's1', 'title': '已提交到云端', 'status': 'done'},
+                            {'id': 's2', 'title': 'Jules 执行中', 'status': 'running'},
+                            {'id': 's3', 'title': '等待拉回', 'status': 'pending'},
+                        ],
+                        'log': log, 'result': None, 'created_at': time.time(), 'thread': None,
+                    }
+                def poll_jules(sid, prompt):
+                    for i in range(40):
+                        time.sleep(15)
+                        try:
+                            p = subprocess.Popen(['jules', 'remote', 'list', '--session'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                            po, _ = p.communicate(timeout=15)
+                            with TASK_MANAGER._lock:
+                                if sid in TASK_MANAGER.tasks:
+                                    TASK_MANAGER.tasks[sid]['log'] += f"\n--- poll #{i} ---\n{po[:500]}"
+                            if 'done' in po.lower() or 'complete' in po.lower():
+                                try:
+                                    pull = subprocess.Popen(['jules', 'remote', 'pull', '--session', sid, '--apply'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.getcwd())
+                                    pull_out, _ = pull.communicate(timeout=60)
+                                    with TASK_MANAGER._lock:
+                                        if sid in TASK_MANAGER.tasks:
+                                            TASK_MANAGER.tasks[sid]['result'] = {'output': pull_out[:3000]}
+                                            TASK_MANAGER.tasks[sid]['state'] = 'done'
+                                            TASK_MANAGER.tasks[sid]['steps'] = [
+                                                {'id': 's1', 'title': '已提交到云端', 'status': 'done'},
+                                                {'id': 's2', 'title': 'Jules 执行完成', 'status': 'done'},
+                                                {'id': 's3', 'title': '已拉回本地合并', 'status': 'done'},
+                                            ]
+                                            TASK_MANAGER.tasks[sid]['log'] += f"\n[拉回结果]\n{pull_out[:2000]}\n"
+                                except Exception as e:
+                                    with TASK_MANAGER._lock:
+                                        if sid in TASK_MANAGER.tasks:
+                                            TASK_MANAGER.tasks[sid]['state'] = 'failed'
+                                            TASK_MANAGER.tasks[sid]['log'] += f"\n[拉回失败] {e}\n"
+                                break
+                        except Exception as e:
+                            with TASK_MANAGER._lock:
+                                if sid in TASK_MANAGER.tasks:
+                                    TASK_MANAGER.tasks[sid]['log'] += f"\n[轮询错误] {e}\n"
+                    else:
+                        with TASK_MANAGER._lock:
+                            if sid in TASK_MANAGER.tasks:
+                                TASK_MANAGER.tasks[sid]['state'] = 'failed'
+                                TASK_MANAGER.tasks[sid]['log'] += "\n[超时] Jules 任务未完成\n"
+                thread = threading.Thread(target=poll_jules, args=(sid, prompt), daemon=True)
+                thread.start()
+                self._json(200, {
+                    "sid": sid, "status": "running",
+                    "steps": [
+                        {"id": "s1", "title": "已提交到云端", "status": "done"},
+                        {"id": "s2", "title": "Jules 执行中", "status": "running"},
+                        {"id": "s3", "title": "等待拉回", "status": "pending"},
+                    ],
+                    "approved": True, "message": out[:500],
+                })
             except Exception as e:
                 self._json(500, {"error": f"Jules 创建失败: {e}"})
             return

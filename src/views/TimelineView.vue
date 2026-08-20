@@ -103,6 +103,10 @@ function dispatchAsyncTask(adapterId: string, text: string) {
         status: computedStatus,
         steps: result.steps?.map(s => ({ ...s, status: s.status || 'pending' })) || [],
       })
+      // 启动进度轮询
+      if (result.sessionId) {
+        startTaskPolling(entryId, adapterId, result.sessionId)
+      }
     } else if (result.type === 'system') {
       // 出错了
       updateEntryData(entryId, { status: 'error', error: result.content })
@@ -545,6 +549,66 @@ function viewTaskLog(entry: TimelineEntry) {
     persistConv()
   })
 }
+
+// ===== 异步任务进度轮询 =====
+const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+function startTaskPolling(entryId: string, adapterId: string, sessionId: string) {
+  if (!sessionId || pollTimers.has(entryId)) return
+
+  const interval = setInterval(async () => {
+    try {
+      let state: string | undefined
+      let steps: any[] | undefined
+
+      if (adapterId === 'dock') {
+        const res = await fetch(`http://127.0.0.1:8710/api/sessions/${sessionId}/activities`, {
+          signal: AbortSignal.timeout(5000)
+        })
+        if (res.ok) {
+          const acts = await res.json()
+          const doneAct = acts.find((a: any) => a.kind === 'executionComplete')
+          const planAct = acts.find((a: any) => a.kind === 'planReady')
+          if (doneAct) { state = 'done'; steps = [{ id: 's0', title: '执行完成', status: 'done' }] }
+          else if (planAct) { state = 'awaiting-approval'; steps = (planAct.text || '').split('\n').filter(Boolean).map((s: string, i: number) => ({ id: `s${i}`, title: s, status: 'pending' })) }
+          else { state = 'running' }
+        }
+      } else {
+        const res = await fetch(`http://127.0.0.1:18443/${adapterId}/status/${sessionId}`, {
+          signal: AbortSignal.timeout(5000)
+        })
+        if (res.ok) {
+          const task = await res.json()
+          state = task.state
+          steps = task.steps
+        }
+      }
+
+      if (state) {
+        updateEntryData(entryId, { status: state, steps: steps || [] })
+      }
+
+      if (state === 'done' || state === 'failed' || state === 'error') {
+        stopTaskPolling(entryId)
+        persistConv()
+      }
+    } catch { /* retry next tick */ }
+  }, 10000)
+
+  pollTimers.set(entryId, interval)
+}
+
+function stopTaskPolling(entryId: string) {
+  const timer = pollTimers.get(entryId)
+  if (timer) { clearInterval(timer); pollTimers.delete(entryId) }
+}
+
+import { onUnmounted } from 'vue'
+onUnmounted(() => {
+  for (const timer of pollTimers.values()) { clearInterval(timer) }
+  pollTimers.clear()
+})
+
 </script>
 
 <template>
