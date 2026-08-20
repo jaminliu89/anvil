@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
 import { guessIntent } from '@/adapters/intent'
 import { useTaskQueueStore } from '@/stores/task-queue'
+import { useSettingsStore } from '@/stores/settings'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
@@ -17,6 +18,8 @@ const BRIDGE = 'http://127.0.0.1:18443'
 const DEFAULT_ADAPTER = 'dsh'
 
 const entries = ref<TimelineEntry[]>([])
+const settingsStore = useSettingsStore()
+const advanced = computed(() => settingsStore.advancedMode)
 const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || DEFAULT_ADAPTER)
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
@@ -840,7 +843,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <CommandBar :auto-search="autoSearch" @toggle-search="toggleSearch" @submit="handleSubmit" />
+    <CommandBar :auto-search="autoSearch" :advanced-mode="advanced" @toggle-search="toggleSearch" @submit="handleSubmit" />
   </div>
 </template>
 

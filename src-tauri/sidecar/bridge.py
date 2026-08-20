@@ -647,6 +647,16 @@ class Handler(BaseHTTPRequestHandler):
         for fname in fallback_names:
             attempts.append((fname, INFERENCE_TARGETS[fname]))
 
+        # 注入 Anvil 角色系统提示：用户不需要感知底层能力
+        role_sys = {
+            "role": "system",
+            "content": "你是 Anvil 助手，一个本地 AI 工作站。你可以直接回答问题，也可以联网搜索。需要最新信息时自动搜索，不用询问用户。回答简洁直接。"
+        }
+        # 如果第一条不是 system 就插入在最前
+        chat_messages = list(messages)
+        if not chat_messages or chat_messages[0].get("role") != "system":
+            chat_messages.insert(0, role_sys)
+
         for fname, furl in attempts:
             try:
                 if furl:  # 切到 fallback 端点
@@ -656,7 +666,7 @@ class Handler(BaseHTTPRequestHandler):
                 use_model = Handler.model_id if furl else (req.get("model") or Handler.model_id)
                 result = self.harness.chat(
                     model=use_model,
-                    messages=messages,
+                    messages=chat_messages,
                     **kwargs,
                 )
                 if result:
@@ -761,16 +771,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, {"query": query, "results": _tavily_search(query, count)})
 
-    # ---- Agent Loop（多轮：分析 → 工具 → 推理 → 再工具 → 回答） ----
+    # ---- Agent Loop（Anvil 原生多轮工具循环） ----
     def _dsh_run(self):
-        """多轮 agent loop。SSE 事件:
-          - step_start: {id, title, status}
-          - step_update: {id, content}        (非流的进度更新)
-          - step_reasoning: {id, content}     (推理链增量)
-          - step_done: {id, status, result}
-          - final: {content, reasoning, steps, used_search}
-          - error: {message}
+        """多轮 agent loop（ReAct 式 + 原生 function calling）。SSE 事件:
+          - step_start/step_update/step_reasoning/step_done/final/error
         """
+        from anvil_agent import run_agent_loop
+
         req = self._read_body()
         prompt = req.get("prompt", "")
         if not prompt:
@@ -794,134 +801,20 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
         try:
-            # =========== Step 1: 分析 → 生成 action plan ===========
-            emit("step_start", {"id": "plan", "title": "制定计划", "status": "running"})
-
-            plan_sys = (
-                "你是一个任务分解专家。输出 JSON action plan。可用 actions:\n"
-                "  - search(query): 联网搜索获取最新信息\n"
-                "  - fetch(url): 抓取指定网页全文\n"
-                "  - answer: 生成最终回答（始终放最后）\n"
-                "规则: 需要最新信息 → search。需要全文 → search 之后再 fetch 具体 URL。\n"
-                "直接回答即可的任务 → 只输出 answer。\n"
-                "输出格式: {\"plan\": [{\"action\":\"search\"|\"fetch\"|\"answer\", \"query\":\"...\", \"url\":\"...\"}]}"
-            )
-            plan_messages = [
-                {"role": "system", "content": plan_sys},
-                {"role": "user", "content": prompt},
-            ]
-            plan_result = self.harness.chat(
+            # 确定当前 target 名称
+            import os as _os
+            # 从环境变量或 target 配置推断，默认 deepseek
+            target_name = "deepseek"
+            base_url = "https://api.deepseek.com/v1"
+            api_key = _os.environ.get("DEEPSEEK_API_KEY", "")
+            run_agent_loop(
+                base_url=base_url,
+                api_key=api_key,
                 model=Handler.model_id,
-                messages=plan_messages,
-                max_tokens=600,
+                prompt=prompt,
+                emit_fn=emit,
+                use_search=use_search,
             )
-            plan_text = plan_result["message"]["content"] if plan_result else ""
-
-            actions = []
-            try:
-                m = re.search(r"\{.*\}", plan_text, re.DOTALL)
-                if m:
-                    plan_json = json.loads(m.group())
-                    actions = plan_json.get("plan", [])
-            except Exception:
-                pass
-            if not actions:
-                actions = [{"action": "answer"}]
-
-            emit("step_update", {"id": "plan", "content": f"计划 {len(actions)} 步"})
-            emit("step_done", {"id": "plan", "status": "done", "result": [a.get("action") for a in actions]})
-
-            # =========== Step 2: 逐 action 执行 ===========
-            tool_results = []
-            for i, action in enumerate(actions):
-                act = action.get("action", "")
-                if act == "answer":
-                    continue
-
-                step_id = f"tool_{i}"
-                step_label = {"search": "联网搜索", "fetch": "抓取网页"}.get(act, act)
-                emit("step_start", {"id": step_id, "title": step_label, "status": "running"})
-
-                if act == "search":
-                    query = action.get("query", prompt)
-                    if use_search:
-                        emit("step_update", {"id": step_id, "content": f"正在搜索: {query[:80]}"})
-                        results = _tavily_search(query, 5)
-                        if results:
-                            emit("step_update", {"id": step_id, "content": f"找到 {len(results)} 条结果"})
-                            summary = "\n\n".join(
-                                f"[{i+1}] {r.get('title', '')}\n来源: {r.get('url', '')}\n{(r.get('content', '') or '')[:400]}"
-                                for i, r in enumerate(results)
-                            )
-                            tool_results.append(f"## 搜索: {query}\n{summary}")
-                        else:
-                            tool_results.append(f"## 搜索: {query}\n(无结果)")
-                            emit("step_update", {"id": step_id, "content": "未找到结果"})
-                    else:
-                        tool_results.append(f"## 搜索: {query}\n(搜索已禁用)")
-                        emit("step_update", {"id": step_id, "content": "搜索已禁用"})
-
-                elif act == "fetch":
-                    url = action.get("url", "")
-                    if url:
-                        emit("step_update", {"id": step_id, "content": f"抓取: {url[:80]}"})
-                        try:
-                            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                            with urlopen(req, timeout=15) as r:
-                                raw = r.read().decode("utf-8", errors="replace")
-                            # 粗略提取正文（去标签）
-                            text = re.sub(r"<[^>]+>", " ", raw)
-                            text = re.sub(r"\s+", " ", text).strip()[:5000]
-                            tool_results.append(f"## 网页: {url}\n{text}")
-                            emit("step_update", {"id": step_id, "content": f"已抓取 {len(text)} 字符"})
-                        except Exception as e:
-                            tool_results.append(f"## 网页: {url}\n(抓取失败: {e})")
-                            emit("step_update", {"id": step_id, "content": f"抓取失败: {str(e)[:60]}"})
-                    else:
-                        emit("step_update", {"id": step_id, "content": "未提供 URL"})
-
-                emit("step_done", {"id": step_id, "status": "done", "result": (tool_results[-1][:100] if tool_results else "")})
-
-            # =========== Step 3: 生成最终回答（含 reasoning 流式） ===========
-            emit("step_start", {"id": "answer", "title": "思考回答", "status": "running"})
-
-            final_ctx = prompt
-            if tool_results:
-                final_ctx = (
-                    f"用户提问: {prompt}\n\n"
-                    f"以下是工具获取到的信息（供参考，回答时标注来源）:\n"
-                    f"{chr(10).join(tool_results)}"
-                )
-
-            final_messages = [
-                {"role": "system", "content": "你是深度求索的 AI 助手。基于已有知识或工具信息回答。简洁、准确、有来源。用中文。"},
-                {"role": "user", "content": final_ctx},
-            ]
-
-            full_content = ""
-            full_reasoning = ""
-
-            for chunk in self.harness.stream_chat(
-                model=Handler.model_id,
-                messages=final_messages,
-            ):
-                ct = chunk.get("type", "")
-                cd = chunk.get("data", "")
-                if ct == "content_delta" and cd:
-                    full_content += cd
-                    emit("step_update", {"id": "answer", "content": cd})
-                elif ct == "reasoning_delta" and cd:
-                    full_reasoning += cd
-                    emit("step_reasoning", {"id": "answer", "content": cd})
-
-            emit("step_done", {"id": "answer", "status": "done", "result": len(full_content)})
-            emit("final", {
-                "content": full_content,
-                "reasoning": full_reasoning,
-                "steps": len(actions),
-                "used_search": any(a.get("action") == "search" for a in actions),
-            })
-
         except Exception as e:
             traceback.print_exc()
             emit("error", {"message": str(e)})

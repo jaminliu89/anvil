@@ -13,6 +13,7 @@ const emit = defineEmits<{
 
 const props = defineProps<{
   autoSearch?: boolean
+  advancedMode?: boolean
 }>()
 
 const input = ref('')
@@ -186,8 +187,8 @@ const groupedAdapters = computed(() => {
 
 <template>
   <div class="command-bar">
-    <!-- 意图猜测条（输入文字时显示在输入框上方） -->
-    <div v-if="intent && !showPalette" class="intent-bar">
+    <!-- 意图猜测条（仅高级模式显示，默认不暴露内部运作） -->
+    <div v-if="props.advancedMode && intent && !showPalette" class="intent-bar">
       <div class="intent-left">
         <span class="intent-label">将调用</span>
         <button class="intent-adapter" @click="showIntentPicker = !showIntentPicker">
