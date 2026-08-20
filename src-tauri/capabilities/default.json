@@ -12,9 +12,8 @@
     "global-shortcut:default",
     "autostart:default",
     "store:default",
+    "core:default",
     "window-state:default",
-    "window:default",
-    "window:allow-start-dragging",
     "dialog:allow-open",
     "dialog:allow-message"
   ]
