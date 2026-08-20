@@ -153,10 +153,24 @@ function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | nu
 
   // 编码类任务 → 走编码降级链
   if (category === 'code') {
-    const adapterId = resolveCodeAdapter(intent || null)
+    const adapterId = resolveCodeAdapter(intent || null, undefined, text)
     const adapter = get(adapterId)
     const hasLoop = adapter?.capabilities?.some(c => c.type === 'agent-loop')
     const isAsync = adapter?.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') && !hasLoop
+
+    // local-coding 单独处理：它的产出是审批卡，不走通用 fallback
+    if (adapterId === 'local-coding' && adapter) {
+      addEntry('message', 'user', { role: 'user', content: text })
+      addEntry('system', 'local-coding', { content: '本地模型处理中...' })
+      adapter.execute('local', text).then(result => {
+        addEntry(result.type, 'local-coding', result as unknown as Record<string, unknown>)
+        busy.value = false
+      }).catch(e => {
+        addEntry('system', 'local-coding', { content: `失败: ${e}` })
+        busy.value = false
+      })
+      return
+    }
 
     if (isAsync) {
       dispatchCodeWithFallback(adapterId, text)

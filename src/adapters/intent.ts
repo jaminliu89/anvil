@@ -47,6 +47,8 @@ const AGENT_RULES: { pattern: RegExp; adapterId: string; command?: string; reaso
   { pattern: /(refactor|重构|优化.*性能|优化.*代码|代码.*清理)/i, adapterId: 'pi', command: 'pi', reason: '代码重构', confidence: 0.76, category: 'code' },
   { pattern: /(用.*(python|js|ts|java|go|rust|c\+\+|cpp|ruby|php|swift|kotlin).*(写|实现|做))/i, adapterId: 'pi', command: 'pi', reason: '写代码任务', confidence: 0.8, category: 'code' },
   { pattern: /(快速排序|冒泡排序|二叉树|链表|算法题|leetcode|力扣|算法.*实现)/i, adapterId: 'pi', command: 'pi', reason: '算法实现', confidence: 0.75, category: 'code' },
+  // 简单编码改动（改个/调整/修改/加个 + 样式/文案/函数/组件/按钮等）
+  { pattern: /(改个|改一下|改下|调整下|调整一下|修改下|修改一下|加个|加一下|加个.*函数|加个.*按钮|加个.*样式|改.*样式|改.*颜色|改.*文案|改.*配置).*/i, adapterId: 'local-coding', command: 'local', reason: '简单代码改动（本地模型）', confidence: 0.55, category: 'code' },
 
   // === 研究/搜索类 ===
   { pattern: /(分析|研究|调研|对比|查一下|搜索|新闻|最新|最近.*进展|行业.*报告|市场.*分析)/i, adapterId: 'dsh', command: 'dsh', reason: '多步分析研究', confidence: 0.72, category: 'research' },
