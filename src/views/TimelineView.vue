@@ -972,15 +972,37 @@ onUnmounted(() => {
               <span v-if="entry.data.branch"> · 分支 {{ entry.data.branch }}</span>
             </div>
             <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="task-steps">
-              <div v-for="(step, idx) in (entry.data.steps as { id: string; title: string; status: string; content?: string }[])"
+              <div v-for="(step, idx) in (entry.data.steps as any[])"
                    :key="step.id" class="task-step" :class="step.status">
                 <div class="step-rail">
                   <span class="step-dot" :class="step.status"></span>
                   <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
                 </div>
                 <div class="step-body">
-                  <div class="step-title">{{ step.title }}</div>
+                  <div class="step-header">
+                    <div class="step-title">{{ step.title }}</div>
+                    <span v-if="step.agent" class="step-agent">{{ step.agent }}</span>
+                  </div>
                   <div v-if="step.content" class="step-content">{{ step.content }}</div>
+                  <!-- 子步骤 -->
+                  <div v-if="step.subSteps && (step.subSteps as unknown[]).length" class="sub-steps">
+                    <div v-for="(sub, sidx) in (step.subSteps as any[])"
+                         :key="sub.id"
+                         class="sub-step"
+                         :class="sub.status">
+                      <div class="sub-rail">
+                        <span class="sub-dot" :class="sub.status"></span>
+                        <span v-if="sidx < (step.subSteps as unknown[]).length - 1" class="sub-line"></span>
+                      </div>
+                      <div class="sub-body">
+                        <div class="sub-title">
+                          {{ sub.title }}
+                          <span v-if="sub.agent" class="sub-agent">{{ sub.agent }}</span>
+                        </div>
+                        <div v-if="sub.content" class="sub-content">{{ sub.content }}</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1034,14 +1056,14 @@ onUnmounted(() => {
                     {{ step.result }}
                   </div>
                   <!-- 子步骤（第二层） -->
-                  <div v-if="step.subSteps && step.subSteps.length" class="sub-steps">
-                    <div v-for="(sub, sidx) in step.subSteps"
+                  <div v-if="step.subSteps && (step.subSteps as unknown[]).length" class="sub-steps">
+                    <div v-for="(sub, sidx) in (step.subSteps as any[])"
                          :key="sub.id"
                          class="sub-step"
                          :class="sub.status">
                       <div class="sub-rail">
                         <span class="sub-dot" :class="sub.status"></span>
-                        <span v-if="sidx < step.subSteps.length - 1" class="sub-line"></span>
+                        <span v-if="sidx < (step.subSteps as unknown[]).length - 1" class="sub-line"></span>
                       </div>
                       <div class="sub-body">
                         <div class="sub-title">
@@ -1506,6 +1528,84 @@ onUnmounted(() => {
   margin-top: 2px;
   line-height: 1.5;
 }
+.task-step .step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.task-step .step-agent {
+  font-size: 10px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.task-step .sub-steps {
+  margin-top: 6px;
+  margin-left: 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-subtle);
+}
+.task-step .sub-step {
+  position: relative;
+  padding-bottom: 6px;
+  display: flex;
+  gap: 6px;
+}
+.task-step .sub-step:last-child {
+  padding-bottom: 0;
+}
+.task-step .sub-rail {
+  position: absolute;
+  left: -16px;
+  top: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.task-step .sub-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink4);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.task-step .sub-dot.running { background: var(--warning); }
+.task-step .sub-dot.done { background: var(--success); }
+.task-step .sub-dot.failed { background: var(--error); }
+.task-step .sub-line {
+  width: 1px;
+  flex: 1;
+  min-height: 8px;
+  background: var(--line-subtle);
+  margin-top: 2px;
+}
+.task-step .sub-body { flex: 1; min-width: 0; }
+.task-step .sub-title {
+  font-size: 12px;
+  color: var(--ink3);
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.task-step .sub-agent {
+  font-size: 9px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.task-step .sub-content {
+  font-size: 11px;
+  color: var(--ink4);
+  margin-top: 2px;
+  line-height: 1.5;
+}
 
 .task-error {
   font-size: 12px;
@@ -1753,6 +1853,101 @@ onUnmounted(() => {
   color: var(--success);
   margin-top: 4px;
   font-family: var(--mono);
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.step-agent {
+  font-size: 10px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+/* 子步骤 */
+.sub-steps {
+  margin-top: 8px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-subtle);
+}
+.sub-step {
+  position: relative;
+  padding-bottom: 8px;
+  display: flex;
+  gap: 8px;
+}
+.sub-step:last-child {
+  padding-bottom: 0;
+}
+.sub-rail {
+  position: absolute;
+  left: -16px;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.sub-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.sub-dot.running {
+  background: var(--signal);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.sub-dot.done {
+  background: var(--success);
+}
+.sub-dot.failed {
+  background: var(--error);
+}
+.sub-line {
+  width: 1px;
+  flex: 1;
+  min-height: 10px;
+  background: var(--line-subtle);
+  margin-top: 3px;
+}
+.sub-body {
+  flex: 1;
+  min-width: 0;
+}
+.sub-title {
+  font-size: 12px;
+  color: var(--ink3);
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sub-agent {
+  font-size: 9px;
+  color: var(--ink4);
+  background: var(--bg-2);
+  padding: 0px 5px;
+  border-radius: 3px;
+}
+.sub-content {
+  font-size: 11px;
+  color: var(--ink4);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.sub-result {
+  font-size: 11px;
+  color: var(--success);
+  margin-top: 3px;
+  opacity: 0.8;
 }
 
 /* loop reasoning */
