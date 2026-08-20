@@ -99,6 +99,9 @@ impl SidecarManager {
         let child_result = if let Some(bin_path) = &binary {
             log::info!("using bundled sidecar: {}", bin_path.display());
             std::process::Command::new(bin_path)
+                .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
+                .env("SILICONFLOW_API_KEY", std::env::var("SILICONFLOW_API_KEY").unwrap_or_default())
+                .env("TAVILY_API_KEY", std::env::var("TAVILY_API_KEY").unwrap_or_default())
                 .arg("--port")
                 .arg(SIDECAR_PORT.to_string())
                 .arg("--target")
@@ -134,6 +137,9 @@ impl SidecarManager {
             let python = find_python();
             log::info!("no bundled sidecar, using python3: {}", python);
             std::process::Command::new(&python)
+                .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
+                .env("SILICONFLOW_API_KEY", std::env::var("SILICONFLOW_API_KEY").unwrap_or_default())
+                .env("TAVILY_API_KEY", std::env::var("TAVILY_API_KEY").unwrap_or_default())
                 .arg(script.to_string_lossy().to_string())
                 .arg("--port")
                 .arg(SIDECAR_PORT.to_string())
