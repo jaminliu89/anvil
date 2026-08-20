@@ -54,6 +54,13 @@ function handleNavClick(item: NavItem) {
   }
 }
 
+function openDrawer(key: string) {
+  const validKeys: DrawerKey[] = ['history', 'connect', 'train', 'guard', 'settings', 'runtime']
+  if (validKeys.includes(key as DrawerKey)) {
+    activeDrawer.value = key as DrawerKey
+  }
+}
+
 const isTimelineActive = computed(() => activeDrawer.value === null)
 
 // 抽屉标题映射
@@ -186,7 +193,7 @@ onMounted(async () => {
 
       <!-- 主内容区：时间线 -->
       <main class="content">
-        <TimelineView ref="timelineRef" />
+        <TimelineView ref="timelineRef" @open-drawer="openDrawer" />
       </main>
     </div>
 

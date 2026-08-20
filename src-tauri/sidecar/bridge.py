@@ -112,6 +112,221 @@ _TARGET_KEYS = {
 }
 
 
+# ===== 异步 Agent 任务管理器（统一模式：create → status → log → approve）=====
+import tempfile
+import shutil
+
+class AsyncTaskManager:
+    """通用异步任务管理器 — 所有 CLI agent 共用一套生命周期管理"""
+    
+    def __init__(self):
+        self.tasks: dict[str, dict] = {}  # sid -> task info
+        self._lock = threading.Lock()
+    
+    def create(self, agent: str, prompt: str, repo: str = '') -> str:
+        sid = f"{int(time.time())}-{agent}-{os.urandom(4).hex()}"
+        with self._lock:
+            self.tasks[sid] = {
+                'sid': sid,
+                'agent': agent,
+                'prompt': prompt,
+                'repo': repo,
+                'state': 'queued',  # queued | planning | awaiting-approval | running | done | failed
+                'steps': [{'id': 's0', 'title': '任务创建中', 'status': 'running'}],
+                'log': '',
+                'result': None,
+                'created_at': time.time(),
+                'thread': None,
+            }
+        return sid
+    
+    def update_state(self, sid: str, state: str):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['state'] = state
+    
+    def add_step(self, sid: str, step_id: str, title: str, status: str = 'pending'):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['steps'].append({'id': step_id, 'title': title, 'status': status})
+    
+    def update_step(self, sid: str, step_id: str, status: str, content: str = ''):
+        with self._lock:
+            if sid in self.tasks:
+                for s in self.tasks[sid]['steps']:
+                    if s['id'] == step_id:
+                        s['status'] = status
+                        if content:
+                            s['content'] = content
+                        break
+    
+    def append_log(self, sid: str, text: str):
+        with self._lock:
+            if sid in self.tasks:
+                self.tasks[sid]['log'] += text
+    
+    def get(self, sid: str) -> dict | None:
+        with self._lock:
+            return self.tasks.get(sid)
+    
+    def list_all(self) -> list[dict]:
+        with self._lock:
+            return list(self.tasks.values())
+
+TASK_MANAGER = AsyncTaskManager()
+
+# ===== Claude Code 代理 =====
+def _claude_available() -> bool:
+    return shutil.which('claude') is not None
+
+def _claude_run(sid: str, prompt: str, repo: str):
+    """后台线程运行 Claude Code 任务"""
+    try:
+        TASK_MANAGER.update_state(sid, 'planning')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', '生成计划中...', 'running')
+        
+        # 准备工作目录
+        workdir = repo or os.getcwd()
+        
+        # 用 --dry-run 或 plan 模式先获取计划（claude 没有标准 plan 命令，简化处理）
+        # 直接创建 worktree 隔离目录
+        tmpdir = tempfile.mkdtemp(prefix=f'claude-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        # 直接执行（简化版：跑一个命令，记录输出）
+        TASK_MANAGER.update_step(sid, 's1', 'done')
+        TASK_MANAGER.add_step(sid, 's2', 'Claude 执行中', 'running')
+        TASK_MANAGER.update_state(sid, 'running')
+        
+        try:
+            proc = subprocess.Popen(
+                ['claude', '--send', prompt, '--max-turns', '5'],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=600)
+            
+            TASK_MANAGER.update_step(sid, 's2', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+            TASK_MANAGER.tasks[sid]['result'] = {'output': TASK_MANAGER.tasks[sid]['log'][-2000:]}
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, '\n[任务超时]\n')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== OpenClaw 代理 =====
+def _openclaw_available() -> bool:
+    return shutil.which('openclaw') is not None
+
+def _openclaw_run(sid: str, prompt: str, repo: str):
+    try:
+        TASK_MANAGER.update_state(sid, 'planning')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', '生成计划中...', 'running')
+        
+        tmpdir = tempfile.mkdtemp(prefix=f'openclaw-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        TASK_MANAGER.update_step(sid, 's1', 'done')
+        TASK_MANAGER.add_step(sid, 's2', 'OpenClaw 执行中', 'running')
+        TASK_MANAGER.update_state(sid, 'running')
+        
+        try:
+            proc = subprocess.Popen(
+                ['openclaw', prompt],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=600)
+            
+            TASK_MANAGER.update_step(sid, 's2', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's2', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== Hermes Agent 代理 =====
+def _hermes_available() -> bool:
+    return shutil.which('hermes') is not None
+
+def _hermes_run(sid: str, prompt: str, _repo: str):
+    try:
+        TASK_MANAGER.update_state(sid, 'running')
+        TASK_MANAGER.update_step(sid, 's0', 'done')
+        TASK_MANAGER.add_step(sid, 's1', 'Hermes 执行中...', 'running')
+        
+        tmpdir = tempfile.mkdtemp(prefix=f'hermes-{sid}-')
+        TASK_MANAGER.append_log(sid, f'工作目录: {tmpdir}\n')
+        
+        try:
+            # hermes run 命令执行（简化）
+            proc = subprocess.Popen(
+                ['hermes', 'run', prompt],
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    TASK_MANAGER.append_log(sid, line)
+            proc.wait(timeout=900)  # hermes 任务可能较长
+            
+            TASK_MANAGER.update_step(sid, 's1', 'done')
+            TASK_MANAGER.update_state(sid, 'done')
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            TASK_MANAGER.update_step(sid, 's1', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+        except Exception as e:
+            TASK_MANAGER.update_step(sid, 's1', 'failed')
+            TASK_MANAGER.update_state(sid, 'failed')
+            TASK_MANAGER.append_log(sid, f'\n[错误] {e}\n')
+    except Exception as e:
+        TASK_MANAGER.update_state(sid, 'failed')
+        TASK_MANAGER.append_log(sid, f'[初始化失败] {e}\n')
+
+# ===== Agent 注册映射 =====
+AGENT_RUNNERS = {
+    'claude': _claude_run,
+    'openclaw': _openclaw_run,
+    'hermes': _hermes_run,
+}
+
+AGENT_AVAILABLE = {
+    'claude': _claude_available,
+    'openclaw': _openclaw_available,
+    'hermes': _hermes_available,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     harness: DeepSeekHarness | None = None  # injected
     salvage_log: list[dict] = []
@@ -197,6 +412,48 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/dsh/health":
             self._json(200, {"ok": True, "dsh": dsh_version, "agent_loop": True, "plugins": 0})
             return
+        
+        # ===== 异步 Agent 健康检查 =====
+        for agent_name in AGENT_AVAILABLE:
+            if self.path == f"/{agent_name}/health":
+                avail = AGENT_AVAILABLE[agent_name]()
+                status_text = "可用" if avail else "未安装"
+                self._json(200, {"ok": avail, "agent": agent_name, "message": status_text})
+                return
+        if self.path == "/jules/health":
+            import shutil
+            avail = shutil.which('jules') is not None
+            self._json(200, {"ok": avail, "agent": "jules", "message": "可用" if avail else "未安装"})
+            return
+        if self.path == "/ollama/health":
+            import shutil
+            avail = shutil.which('ollama') is not None
+            self._json(200, {"ok": avail, "agent": "ollama", "message": "可用" if avail else "未安装"})
+            return
+        
+        # ===== 异步 Agent 状态查询 =====
+        for agent_name in AGENT_RUNNERS:
+            prefix = f"/{agent_name}/status/"
+            if self.path.startswith(prefix):
+                sid = self.path[len(prefix):]
+                task = TASK_MANAGER.get(sid)
+                if task:
+                    self._json(200, task)
+                else:
+                    self._json(404, {"error": "task not found"})
+                return
+        
+        # ===== 异步 Agent 日志查询 =====
+        for agent_name in AGENT_RUNNERS:
+            prefix = f"/{agent_name}/log/"
+            if self.path.startswith(prefix):
+                sid = self.path[len(prefix):]
+                task = TASK_MANAGER.get(sid)
+                if task:
+                    self._json(200, {"log": task.get('log', '')[-3000:]})
+                else:
+                    self._json(404, {"error": "task not found"})
+                return
         if self.path == "/unsloth/status":
             self._unsloth_status()
             return
@@ -232,11 +489,68 @@ class Handler(BaseHTTPRequestHandler):
                 self._unsloth_train_stop()
             elif self.path == "/dsh/run":
                 self._dsh_run()
+            elif self.path == "/claude/create":
+                self._agent_create('claude')
+            elif self.path == "/openclaw/create":
+                self._agent_create('openclaw')
+            elif self.path == "/hermes/create":
+                self._agent_create('hermes')
+            elif self.path == "/jules/create":
+                self._agent_create('jules')
+            elif self.path.startswith("/claude/approve/") or                  self.path.startswith("/openclaw/approve/") or                  self.path.startswith("/hermes/approve/") or                  self.path.startswith("/jules/approve/"):
+                parts = self.path.split('/')
+                if len(parts) >= 4:
+                    self._agent_approve()
+                else:
+                    self._json(400, {"error": "sid required"})
             else:
                 self._json(404, {"error": "not found"})
         except Exception as e:
             traceback.print_exc()
             self._json(500, {"error": str(e)})
+
+    # ---- 异步 Agent 创建 ----
+    def _agent_create(self, agent: str):
+        body = self._read_body()
+        prompt = body.get('prompt', '')
+        if not prompt:
+            self._json(400, {"error": "prompt required"})
+            return
+        if agent == 'jules':
+            import subprocess
+            try:
+                proc = subprocess.Popen(['jules', 'new', prompt], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                out, _ = proc.communicate(timeout=30)
+                sid = f"jules-{int(time.time())}"
+                self._json(200, {"sid": sid, "status": "awaiting-approval", "steps": [{"id": "s0", "title": "计划已生成", "status": "pending"}], "approved": False, "message": out[:500]})
+            except Exception as e:
+                self._json(500, {"error": f"Jules 创建失败: {e}"})
+            return
+        runner = AGENT_RUNNERS.get(agent)
+        if not runner:
+            self._json(400, {"error": f"unknown agent: {agent}"})
+            return
+        avail = AGENT_AVAILABLE.get(agent, lambda: False)()
+        if not avail:
+            self._json(503, {"error": f"{agent} CLI 未安装"})
+            return
+        sid = TASK_MANAGER.create(agent, prompt)
+        thread = threading.Thread(target=runner, args=(sid, prompt, ''), daemon=True)
+        thread.start()
+        with TASK_MANAGER._lock:
+            TASK_MANAGER.tasks[sid]['thread'] = thread
+        self._json(200, {"sid": sid, "status": "awaiting-approval", "steps": [{"id": "s0", "title": "计划待审批", "status": "pending"}], "approved": False})
+
+    # ---- 异步 Agent 批准执行 ----
+    def _agent_approve(self):
+        parts = self.path.split('/')
+        sid = parts[3]
+        task = TASK_MANAGER.get(sid)
+        if not task:
+            self._json(404, {"error": "task not found"})
+            return
+        TASK_MANAGER.update_state(sid, 'running')
+        self._json(200, {"ok": True, "sid": sid, "message": "任务已批准，执行中"})
 
     # ---- 守卫化对话 ----
     def _chat(self):

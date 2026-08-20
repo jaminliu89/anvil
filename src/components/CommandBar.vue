@@ -189,7 +189,7 @@ const groupedAdapters = computed(() => {
     <!-- 意图猜测条（输入文字时显示在输入框上方） -->
     <div v-if="intent && !showPalette" class="intent-bar">
       <div class="intent-left">
-        <span class="intent-label">将使用</span>
+        <span class="intent-label">将调用</span>
         <button class="intent-adapter" @click="showIntentPicker = !showIntentPicker">
           {{ intent.adapterName }}
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -252,7 +252,7 @@ const groupedAdapters = computed(() => {
         v-model="input"
         @input="onInput"
         @keydown="onKeydown"
-        placeholder="说点什么，我来搞定。斜杠调工具。"
+        placeholder="说点什么，我来搞定。"
         rows="2"
       ></textarea>
       <button class="send-btn" @click="onSubmit" :disabled="!input.trim()">

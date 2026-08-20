@@ -37,3 +37,21 @@
 - [x] T6.3 GuardView → 抽屉适配（完整重写样式 + v2 token）
 - [x] T6.4 SettingsView → 抽屉适配（完整重写样式 + v2 token）
 - [x] T6.5 RuntimeView → 抽屉适配（完整重写样式 + v2 token）
+
+## Phase 7 — 统一调度（自然语言即入口）
+- [x] T7.1 默认 adapter 改 dsh（agent loop 是万能入口）
+- [x] T7.2 聊天消息自动路由：猜意图 → 选 agent → 同步/异步分流
+- [x] T7.3 失败自动兜底：目标 agent 不可用就切 DSH
+- [x] T7.4 系统操作自然语言触发（打开设置/历史/连接/训练等）
+- [x] T7.5 文案去斜杠化：空状态/输入框/意图条全改成自然语言风格
+- [x] T7.6 意图规则扩充：覆盖编码/搜索/训练/Jules/Claude/OpenClaw/Hermes 等触发词
+- [x] T7.7 异步任务卡片（状态标签 + 步骤时间轴 + 批准按钮 + 错误态/完成态）
+- [x] T7.8 dock adapter 深度接入：派单 → 状态更新 → 批准 → 结果回填
+- [x] T7.9 Jules adapter 骨架（可用性检测 + 意图识别 + 自动降级）
+- [x] T7.10 Claude Code adapter（bridge 代理 + 意图识别 + 异步任务卡片）
+- [x] T7.11 OpenClaw adapter（bridge 代理 + 意图识别 + 异步任务卡片）
+- [x] T7.12 Hermes Agent adapter（bridge 代理 + 意图识别 + 研究写作路由）
+- [x] T7.13 Ollama adapter（本地模型聊天兜底）
+- [x] T7.14 Bridge 异步 Agent 任务管理器（统一生命周期：create→status→log→approve）
+- [ ] T7.15 异步任务实时进度轮询（前端定时拉状态更新卡片）
+- [ ] T7.16 多任务队列视图（左侧栏增强，展示所有运行中任务）

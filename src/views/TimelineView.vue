@@ -4,6 +4,7 @@ import CommandBar from '@/components/CommandBar.vue'
 import { registerAllAdapters } from '@/adapters'
 import { get, all } from '@/adapters/registry'
 import { runAgentLoopStream, type AgentLoopStep } from '@/adapters/dsh-adapter'
+import { guessIntent } from '@/adapters/intent'
 import type { Parsed } from '@/adapters/parse'
 import type { TimelineEntry } from '@/adapters/types'
 import { markdownToHtml } from '@/utils/markdown'
@@ -11,11 +12,18 @@ import { listConvs, saveConv, loadConv, newConvId } from '@/utils/conv-store'
 
 const BRIDGE = 'http://127.0.0.1:18443'
 
+// 默认用 dsh（agent loop 是万能入口，能调度所有能力）
+const DEFAULT_ADAPTER = 'dsh'
+
 const entries = ref<TimelineEntry[]>([])
-const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || 'ling')
+const currentAdapterId = ref(localStorage.getItem('anvil.adapter') || DEFAULT_ADAPTER)
 const messagesEl = ref<HTMLElement | null>(null)
 const busy = ref(false)
 const autoSearch = ref(localStorage.getItem('anvil.search') !== '0')
+
+const emit = defineEmits<{
+  openDrawer: [key: string]
+}>()
 
 // agent loop 推理流式累积区
 const reasoningRef = ref('')
@@ -23,6 +31,141 @@ const reasoningRef = ref('')
 function persistAdapter(id: string) {
   currentAdapterId.value = id
   localStorage.setItem('anvil.adapter', id)
+}
+
+// ===== 任务调度：自动选 agent + 同步/异步分流 =====
+
+/** 走普通聊天（带搜索增强） */
+async function runChatWithAdapter(adapterId: string, text: string) {
+  const adapter = get(adapterId)
+  if (!adapter?.chat) return
+
+  let prompt = text
+  if (autoSearch.value) {
+    const context = await searchWeb(text)
+    if (context) {
+      addEntry('system', 'system', { content: '已搜索网络，正在整合结果...' })
+      prompt = `以下是联网搜索结果（供你参考，输出时用自然语言组织，必要时在句末标注来源）：\n${context}\n\n用户提问: ${text}`
+    }
+  }
+
+  const history = entries.value
+    .filter(e => e.type === 'message' && e.adapterId === adapterId)
+    .slice(0, -1)
+    .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
+
+  try {
+    const result = await adapter.chat(history, prompt)
+    addEntry('message', adapterId, {
+      role: 'assistant', content: result.content, reasoning: result.reasoning,
+    })
+    persistConv()
+  } catch (e) {
+    addEntry('system', adapterId, { content: `错误: ${e}` })
+  }
+}
+
+/** 派发到异步编码 agent（dock / jules / 等）
+ *  创建 plan 类型卡片 + 启动状态轮询 + 完成后回填结果
+ */
+function dispatchAsyncTask(adapterId: string, text: string) {
+  const adapter = get(adapterId)
+  if (!adapter) {
+    // 兜底 dsh
+    addEntry('system', 'system', { content: `${adapterId} 暂不可用，由 Agent Loop 接手` })
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+    return
+  }
+
+  // 创建异步任务卡片
+  addEntry('plan', adapterId, {
+    title: text.slice(0, 60),
+    content: text,
+    status: 'queued',
+    steps: [{ id: 's0', title: '排队中...', status: 'running' }],
+    sessionId: '',
+  })
+  const entryId = entries.value[entries.value.length - 1].id
+
+  // 派发 + 轮询
+  adapter.execute(adapter.commands?.[0] || adapterId, text).then(result => {
+    if (result.type === 'plan') {
+      // 从 result.data.status 或 result.approved 判断状态
+      const statusFromData = (result.data as Record<string, unknown> | undefined)?.status as string | undefined
+      const computedStatus = statusFromData ||
+        (result.steps?.some(s => s.status === 'running') ? 'running' :
+         result.approved ? 'running' : 'awaiting-approval')
+
+      updateEntryData(entryId, {
+        ...result,
+        status: computedStatus,
+        steps: result.steps?.map(s => ({ ...s, status: s.status || 'pending' })) || [],
+      })
+    } else if (result.type === 'system') {
+      // 出错了
+      updateEntryData(entryId, { status: 'error', error: result.content })
+    } else {
+      updateEntryData(entryId, { ...result, status: 'done' })
+    }
+  }).catch(e => {
+    updateEntryData(entryId, {
+      status: 'error',
+      error: `派单失败: ${e}`,
+      steps: [{ id: 'err', title: '派单失败', status: 'failed' }],
+    })
+    // 失败兜底：转 dsh
+    addEntry('system', 'system', { content: `${adapter.name} 派单失败，由 Agent Loop 接手` })
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+  })
+}
+
+/** 统一调度入口 — 根据意图选最合适的执行方式 */
+function dispatchTask(text: string, intent?: ReturnType<typeof guessIntent> | null) {
+  const adapterId = intent?.adapterId && intent.adapterId !== 'system'
+    ? intent.adapterId
+    : DEFAULT_ADAPTER
+  const adapter = get(adapterId)
+
+  // 没找到目标 adapter → 兜底 dsh
+  if (!adapter) {
+    const fallback = get('dsh') || all()[0]
+    addEntry('system', 'system', { content: intent?.adapterName ? `${intent.adapterName} 暂不可用，由 Agent Loop 接手` : '正在处理...' })
+    addEntry('agent-loop', fallback.id, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+    return
+  }
+
+  const hasLoop = adapter.capabilities?.some(c => c.type === 'agent-loop')
+  // 有 plan/execute 能力的 = 异步编码 agent，走任务卡片
+  const isAsyncCode = adapter.capabilities?.some(c => c.type === 'plan' || c.type === 'execute') &&
+    !hasLoop &&
+    (intent?.category === 'code' || intent?.category === 'research')
+
+  if (hasLoop) {
+    // agent loop = 同步多步
+    addEntry('agent-loop', adapterId, { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+  } else if (isAsyncCode) {
+    // 异步任务（编码/研究类）
+    dispatchAsyncTask(adapterId, text)
+    busy.value = false  // 异步任务不阻塞输入
+  } else if (adapter.chat) {
+    // 普通同步聊天
+    runChatWithAdapter(adapterId, text)
+    busy.value = false
+  } else {
+    // 啥都不会 → 兜底 dsh
+    addEntry('system', 'system', { content: `${adapter.name} 不支持直接聊天，由 Agent Loop 接手` })
+    addEntry('agent-loop', 'dsh', { title: 'Agent Loop', content: text, status: 'running', steps: [] })
+    const loopId = entries.value[entries.value.length - 1].id
+    startAgentLoop(text, loopId)
+  }
 }
 
 const convId = ref(localStorage.getItem('anvil.conv.current') || newConvId())
@@ -115,38 +258,32 @@ async function handleSubmit(parsed: Parsed) {
 
   if (parsed.type === 'chat') {
     if (!parsed.text) { busy.value = false; return }
-    addEntry('message', currentAdapterId.value, { role: 'user', content: parsed.text })
+
+    // 1. 猜意图
+    const availableIds = all().map(a => a.id)
+    const intent = guessIntent(parsed.text, availableIds)
+
+    // 2. 系统操作：打开抽屉
+    if (intent?.action === 'open_drawer' && intent.drawer) {
+      addEntry('message', 'system', { role: 'user', content: parsed.text })
+      const noun = intent.reason.replace('打开', '').replace('管理', '').replace('查看', '').replace('启动', '')
+      addEntry('system', 'system', { content: `好的，打开${noun}。` })
+      emit('openDrawer', intent.drawer)
+      persistConv()
+      busy.value = false
+      return
+    }
+
+    // 3. 用户消息 + 自动调度
+    const displayAdapter = intent?.adapterId && intent.adapterId !== 'system'
+      ? intent.adapterId
+      : DEFAULT_ADAPTER
+    addEntry('message', displayAdapter, { role: 'user', content: parsed.text })
     persistConv()
 
-    let prompt = parsed.text
-    if (autoSearch.value) {
-      const context = await searchWeb(parsed.text)
-      if (context) {
-        addEntry('system', 'system', { content: '已搜索网络，正在整合结果...' })
-        prompt = `以下是联网搜索结果（供你参考，输出时用自然语言组织，必要时在句末标注来源）：\n${context}\n\n用户提问: ${parsed.text}`
-      }
-    }
-
-    const adapter = get(currentAdapterId.value)
-    if (adapter?.chat) {
-      const history = entries.value
-        .filter(e => e.type === 'message' && e.adapterId === currentAdapterId.value)
-        .slice(0, -1)
-        .map(e => ({ role: (e.data.role as 'user' | 'assistant') || 'assistant', content: (e.data.content as string) || '' }))
-
-      try {
-        const result = await adapter.chat(history, prompt)
-        addEntry('message', currentAdapterId.value, {
-          role: 'assistant', content: result.content, reasoning: result.reasoning,
-        })
-        persistConv()
-      } catch (e) {
-        addEntry('system', currentAdapterId.value, { content: `错误: ${e}` })
-      }
-    } else {
-      addEntry('system', currentAdapterId.value, { content: '当前适配器不支持聊天。输入 /switch <name> 切换。' })
-    }
-    busy.value = false
+    // 4. 派任务（同步/异步自动分流，失败自动兜底）
+    dispatchTask(parsed.text, intent)
+    // 注意：busy 的释放在各执行路径里自己处理
     return
   }
 
@@ -381,6 +518,33 @@ function isSystemError(entry: TimelineEntry): boolean {
   const errorPatterns = ['错误', '失败', '不支持', '未启动', '未就绪', '不行', '无法', '拒绝']
   return errorPatterns.some(p => content.includes(p))
 }
+
+// 异步任务状态显示文案
+function taskStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    'queued': '排队中',
+    'running': '执行中',
+    'awaiting-approval': '待审批',
+    'done': '已完成',
+    'failed': '失败',
+    'error': '错误',
+    'pending': '等待中',
+    'approved': '已批准',
+  }
+  return map[status] || status || '等待中'
+}
+
+// 查看任务日志（简单版：弹系统消息）
+function viewTaskLog(entry: TimelineEntry) {
+  const sid = entry.data.sessionId as string
+  if (!sid) return
+  const adapter = get(entry.adapterId)
+  if (!adapter) return
+  adapter.execute('log', sid).then(result => {
+    addEntry(result.type, entry.adapterId, result as unknown as Record<string, unknown>)
+    persistConv()
+  })
+}
 </script>
 
 <template>
@@ -391,7 +555,7 @@ function isSystemError(entry: TimelineEntry): boolean {
 
       <div v-if="entries.length === 0" class="empty-state">
         <div class="empty-brand">Anvil</div>
-        <div class="empty-desc">说点什么，我来帮你搞定。</div>
+        <div class="empty-desc">告诉我你想做什么，我来选工具。</div>
         <div class="empty-suggestions">
           <button class="suggestion-chip" @click="quickSend('帮我分析一下最近的 AI 新闻')">
             <svg class="chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -455,25 +619,48 @@ function isSystemError(entry: TimelineEntry): boolean {
             <div class="bubble-content" v-html="markdownToHtml(entry.data.content as string)"></div>
           </div>
 
-          <!-- Plan 卡片 -->
-          <div v-else-if="entry.type === 'plan'" class="plan-block">
-            <div v-if="entry.data.title" class="plan-title">{{ entry.data.title as string }}</div>
-            <div v-if="entry.data.sessionId" class="plan-meta">
-              session {{ String(entry.data.sessionId).slice(0, 14) }} · 分支 {{ entry.data.branch }}
+          <!-- 异步任务卡片（plan/execution/异步任务） -->
+          <div v-else-if="entry.type === 'plan'" class="async-task-card"
+               :class="String(entry.data.status || 'pending')">
+            <div class="task-header">
+              <span class="task-adapter">{{ entry.adapterId }}</span>
+              <span class="task-status" :class="String(entry.data.status || 'pending')">
+                {{ taskStatusLabel(entry.data.status as string) }}
+              </span>
             </div>
-            <div v-if="entry.data.steps" class="plan-steps">
-              <div v-for="step in (entry.data.steps as { id: string; title: string; status: string }[])"
-                   :key="step.id" class="plan-step">
-                <span class="plan-step-dot" :class="step.status"></span>
-                <span class="plan-step-title">{{ step.title }}</span>
+            <div v-if="entry.data.title" class="task-title">{{ entry.data.title as string }}</div>
+            <div v-if="entry.data.sessionId" class="task-meta">
+              session {{ String(entry.data.sessionId).slice(0, 14) }}
+              <span v-if="entry.data.branch"> · 分支 {{ entry.data.branch }}</span>
+            </div>
+            <div v-if="entry.data.steps && (entry.data.steps as unknown[]).length" class="task-steps">
+              <div v-for="(step, idx) in (entry.data.steps as { id: string; title: string; status: string; content?: string }[])"
+                   :key="step.id" class="task-step" :class="step.status">
+                <div class="step-rail">
+                  <span class="step-dot" :class="step.status"></span>
+                  <span v-if="idx < (entry.data.steps as unknown[]).length - 1" class="step-line"></span>
+                </div>
+                <div class="step-body">
+                  <div class="step-title">{{ step.title }}</div>
+                  <div v-if="step.content" class="step-content">{{ step.content }}</div>
+                </div>
               </div>
             </div>
-            <button v-if="entry.data.sessionId && !entry.data.approved"
-                    class="approve-btn"
-                    @click="entry.data.approved = true; approvePlan(entry)">
-              批准执行
-            </button>
-            <div v-else-if="entry.data.approved" class="plan-approved">已批准，执行中</div>
+            <div v-if="entry.data.error" class="task-error">
+              {{ entry.data.error as string }}
+            </div>
+            <div class="task-actions">
+              <button v-if="entry.data.status === 'awaiting-approval' && entry.data.sessionId"
+                      class="approve-btn"
+                      @click="approvePlan(entry)">
+                批准执行
+              </button>
+              <button v-if="entry.data.status === 'done' && entry.data.sessionId"
+                      class="secondary-btn"
+                      @click="viewTaskLog(entry)">
+                查看日志
+              </button>
+            </div>
           </div>
 
           <!-- Agent Loop 任务卡（无框，时间轴式） -->
@@ -810,50 +997,135 @@ function isSystemError(entry: TimelineEntry): boolean {
 }
 .reasoning-body.open { display: block; }
 
-/* ── Plan 卡片 ── */
-.plan-block {
+/* ── 异步任务卡片 ── */
+.async-task-card {
   background: var(--surface);
   border: 1px solid var(--line-subtle);
   border-radius: 10px;
   padding: 14px 16px;
   max-width: 85%;
 }
-.plan-title {
+.async-task-card.error {
+  border-color: var(--error);
+  background: rgba(120, 75, 70, 0.04);
+}
+.async-task-card.done {
+  border-color: var(--success);
+}
+
+.task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.task-adapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.task-status {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--ink3);
+}
+.task-status.running { color: var(--warning); background: rgba(180, 140, 60, 0.08); }
+.task-status.done { color: var(--success); background: rgba(70, 100, 79, 0.08); }
+.task-status.error,
+.task-status.failed { color: var(--error); background: rgba(120, 75, 70, 0.08); }
+.task-status.awaiting-approval { color: var(--signal); background: var(--signalSoft); }
+.task-status.queued { color: var(--ink3); background: var(--muted); }
+
+.task-title {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 4px;
   color: var(--ink);
 }
-.plan-meta {
+.task-meta {
   font-size: 11px;
   color: var(--ink4);
   font-family: var(--mono);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.plan-steps {
+
+/* 任务步骤时间轴（复用 agent-loop 的 step 样式思路） */
+.task-steps {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 2px;
+  margin-bottom: 12px;
 }
-.plan-step {
+.task-step {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink2);
+  gap: 10px;
+  min-height: 22px;
 }
-.plan-step-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.task-step .step-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 12px;
   flex-shrink: 0;
 }
-.plan-step-dot.pending { background: var(--ink4); }
-.plan-step-dot.approved { background: var(--success); }
-.plan-step-dot.done { background: var(--success); }
-.plan-step-dot.running { background: var(--warning); }
+.task-step .step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink4);
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.task-step.running .step-dot { background: var(--warning); }
+.task-step.done .step-dot { background: var(--success); }
+.task-step.failed .step-dot { background: var(--error); }
+.task-step.pending .step-dot { background: var(--ink4); }
+.task-step .step-line {
+  width: 1px;
+  flex: 1;
+  background: var(--line-subtle);
+  margin-top: 2px;
+}
+.task-step .step-body {
+  flex: 1;
+  padding-bottom: 8px;
+}
+.task-step .step-title {
+  font-size: 13px;
+  color: var(--ink2);
+  line-height: 1.4;
+}
+.task-step.running .step-title { color: var(--ink); font-weight: 500; }
+.task-step.done .step-title { color: var(--ink2); }
+.task-step.pending .step-title { color: var(--ink3); }
+.task-step.failed .step-title { color: var(--error); }
+.task-step .step-content {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-top: 2px;
+  line-height: 1.5;
+}
 
+.task-error {
+  font-size: 12px;
+  color: var(--error);
+  padding: 8px 12px;
+  background: rgba(120, 75, 70, 0.06);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
 .approve-btn {
   padding: 6px 16px;
   background: var(--signal);
@@ -863,13 +1135,22 @@ function isSystemError(entry: TimelineEntry): boolean {
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
-  margin-top: 8px;
+  font-weight: 500;
 }
 .approve-btn:hover { opacity: 0.9; }
-.plan-approved {
+.secondary-btn {
+  padding: 6px 14px;
+  background: none;
+  color: var(--ink2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   font-size: 12px;
-  color: var(--success);
-  margin-top: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.secondary-btn:hover {
+  border-color: var(--ink3);
+  color: var(--ink);
 }
 
 /* ── Agent Loop 任务卡（时间轴式） ── */

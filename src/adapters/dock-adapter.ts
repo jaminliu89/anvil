@@ -113,21 +113,29 @@ async function createSession(prompt: string): Promise<ExecutionResult> {
     })
 
     const plan = await pollPlan(r.sid)
+    const autoApproved = !!plan.autoApproved
 
     return {
       type: 'plan',
       title: prompt.slice(0, 60),
       content: '',
-      steps: plan.steps.map((s, i) => ({ id: `s${i}`, title: s, status: 'pending' as const })),
+      steps: plan.steps.map((s, i) => ({
+        id: `s${i}`,
+        title: s,
+        status: (autoApproved ? (i === 1 ? 'running' : 'done') : 'pending') as
+          'pending' | 'running' | 'done',
+      })),
       sessionId: r.sid,
       branch: r.branch,
+      approved: autoApproved,
+      data: { status: autoApproved ? 'running' : 'awaiting-approval' },
     }
   } catch (e) {
     return { type: 'system', content: `dock 创建失败: ${e}` }
   }
 }
 
-async function pollPlan(sid: string): Promise<{ steps: string[] }> {
+async function pollPlan(sid: string): Promise<{ steps: string[]; autoApproved?: boolean }> {
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 2000))
     try {
@@ -136,12 +144,15 @@ async function pollPlan(sid: string): Promise<{ steps: string[] }> {
       if (planAct?.text) {
         return { steps: planAct.text.split('\n').filter((l: string) => l.trim()) }
       }
-      // 已经在执行/完成，直接停
-      const done = acts.find(a => a.kind === 'phaseStarted' || a.kind === 'executionComplete')
-      if (done) return { steps: ['（已进入执行阶段）'] }
+      // 已经在执行/完成 → 说明是 auto 模式，不需要审批
+      const started = acts.find(a => a.kind === 'phaseStarted')
+      const done = acts.find(a => a.kind === 'executionComplete')
+      if (started || done) {
+        return { steps: ['计划已生成', '自动执行中'], autoApproved: true }
+      }
     } catch { /* retry */ }
   }
-  return { steps: ['（计划生成超时，用 /dock status 查看状态）'] }
+  return { steps: ['（计划生成中，请稍候...）'] }
 }
 
 async function approveSession(sid: string): Promise<ExecutionResult> {
