@@ -3,7 +3,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'timeline', component: () => import('@/views/TimelineView.vue') },
+    { path: '/', name: 'task', component: () => import('@/views/TaskView.vue') },
+    { path: '/timeline', name: 'timeline', component: () => import('@/views/TimelineView.vue') },
     { path: '/chat', name: 'chat', component: () => import('@/views/ChatView.vue') },
     { path: '/runtime', name: 'runtime', component: () => import('@/views/RuntimeView.vue') },
     { path: '/train', name: 'train', component: () => import('@/views/TrainView.vue') },
