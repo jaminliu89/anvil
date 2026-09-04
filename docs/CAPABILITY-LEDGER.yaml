@@ -5,63 +5,69 @@ acceptance_gate: kim_test
 
 capabilities:
   ANVIL-CAP-001:
-    name: Desktop launch
+    name: Desktop clean launch
     status: IMPLEMENTED
-    claim: "Tauri/Vue desktop application code exists"
+    claim: "Tauri shell no longer auto-starts DSH/model sidecar during boot"
+    verification_evidence:
+      - "src-tauri/src/lib.rs removes dsh::manager::init from setup"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-002:
     name: Unified timeline
     status: IMPLEMENTED
-    claim: "Timeline implementation exists but has not passed founder acceptance"
+    claim: "Legacy timeline implementation exists but is not the default product entry"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-003:
     name: Local model chat
     status: IMPLEMENTED
-    claim: "Integration code/configuration exists; usability not accepted"
+    claim: "Legacy optional integration exists; it is not required for VS-001 startup"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-004:
     name: Coding agent execution
     status: IMPLEMENTED
-    claim: "Adapters/integration code exists; end-to-end founder path not accepted"
+    claim: "Legacy adapters exist; VS-001 owned CodingWorker path is not yet connected"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-005:
     name: Dock asynchronous dispatch
     status: IMPLEMENTED
-    claim: "Dock integration is represented in current implementation/design; Anvil end-to-end use is not accepted"
+    claim: "Dock adapter exists; VS-001 Task -> CodingWorker -> Dock path is not yet verified"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-006:
     name: Training integration
     status: IMPLEMENTED
-    claim: "Training integration is represented in current implementation/design; not accepted"
+    claim: "Legacy integration exists outside the VS-001 critical path"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-007:
     name: Harness integration
     status: IMPLEMENTED
-    claim: "Harness bridge/integration is represented in current implementation/design; not accepted"
+    claim: "Legacy optional integration exists outside the VS-001 critical path"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-008:
     name: Founder core vertical slice
-    status: PLANNED
-    claim: "Launch -> real task -> execute -> observe -> inspect result -> accept"
-    verification_evidence: []
+    status: IMPLEMENTED
+    claim: "Phase A+B code exists: clean boot architecture + normal Repository/Task/Run entry; real worker execution/evidence/acceptance still pending"
+    verification_evidence:
+      - "src/router/index.ts defaults / to TaskView"
+      - "src/views/TaskView.vue provides repository picker, task input and Run without slash commands"
+      - "src/App.vue removes DSH/model status and legacy navigation from default shell"
+      - "src-tauri/src/lib.rs does not auto-start DSH sidecar"
     acceptance_evidence: []
     protected: false
 
 claim_policy:
   public_support_claim_requires: ACCEPTED
   accepted_capabilities: []
-  current_product_claim: "Architecture experiment under rescue; not yet an accepted MVP"
+  current_product_claim: "Architecture experiment under rescue; VS-001 Phase A+B implemented but not verified/accepted"
