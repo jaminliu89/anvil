@@ -1,0 +1,67 @@
+schema_version: 2
+product: Anvil
+product_status: FAILED_NOT_USABLE
+acceptance_gate: kim_test
+
+capabilities:
+  ANVIL-CAP-001:
+    name: Desktop launch
+    status: IMPLEMENTED
+    claim: "Tauri/Vue desktop application code exists"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-002:
+    name: Unified timeline
+    status: IMPLEMENTED
+    claim: "Timeline implementation exists but has not passed founder acceptance"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-003:
+    name: Local model chat
+    status: IMPLEMENTED
+    claim: "Integration code/configuration exists; usability not accepted"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-004:
+    name: Coding agent execution
+    status: IMPLEMENTED
+    claim: "Adapters/integration code exists; end-to-end founder path not accepted"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-005:
+    name: Dock asynchronous dispatch
+    status: IMPLEMENTED
+    claim: "Dock integration is represented in current implementation/design; Anvil end-to-end use is not accepted"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-006:
+    name: Training integration
+    status: IMPLEMENTED
+    claim: "Training integration is represented in current implementation/design; not accepted"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-007:
+    name: Harness integration
+    status: IMPLEMENTED
+    claim: "Harness bridge/integration is represented in current implementation/design; not accepted"
+    acceptance_evidence: []
+    protected: false
+
+  ANVIL-CAP-008:
+    name: Founder core vertical slice
+    status: PLANNED
+    claim: "Launch -> real task -> execute -> observe -> inspect result -> accept"
+    verification_evidence: []
+    acceptance_evidence: []
+    protected: false
+
+claim_policy:
+  public_support_claim_requires: ACCEPTED
+  accepted_capabilities: []
+  current_product_claim: "Architecture experiment under rescue; not yet an accepted MVP"
