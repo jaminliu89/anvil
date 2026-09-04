@@ -28,16 +28,23 @@ capabilities:
     protected: false
 
   ANVIL-CAP-004:
-    name: Coding agent execution
+    name: Coding worker execution boundary
     status: IMPLEMENTED
-    claim: "Legacy adapters exist; VS-001 owned CodingWorker path is not yet connected"
+    claim: "Owned CodingWorker boundary now creates Dock sessions, waits for real plan state, and performs truthful approval transition; execution events/evidence are still pending"
+    verification_evidence:
+      - "src/runtime/coding-worker.ts owns Task -> Dock planning/approval boundary"
+      - "src/views/TaskView.vue calls CodingWorker rather than slash-command adapter path"
+      - "UI moves to executing only after backend approval returns success"
     acceptance_evidence: []
     protected: false
 
   ANVIL-CAP-005:
     name: Dock asynchronous dispatch
     status: IMPLEMENTED
-    claim: "Dock adapter exists; VS-001 Task -> CodingWorker -> Dock path is not yet verified"
+    claim: "VS-001 Task -> CodingWorker -> Dock plan/approval path is implemented but not machine-verified on founder environment"
+    verification_evidence:
+      - "Dock health check precedes session creation"
+      - "Dock session + plan are surfaced through owned CodingWorker contract"
     acceptance_evidence: []
     protected: false
 
@@ -58,16 +65,17 @@ capabilities:
   ANVIL-CAP-008:
     name: Founder core vertical slice
     status: IMPLEMENTED
-    claim: "Phase A+B code exists: clean boot architecture + normal Repository/Task/Run entry; real worker execution/evidence/acceptance still pending"
+    claim: "Clean boot + Repository/Task/Run + real CodingWorker planning/approval path are implemented; execution events, tests/diff, accept/reject, machine verification and founder acceptance remain pending"
     verification_evidence:
       - "src/router/index.ts defaults / to TaskView"
       - "src/views/TaskView.vue provides repository picker, task input and Run without slash commands"
       - "src/App.vue removes DSH/model status and legacy navigation from default shell"
       - "src-tauri/src/lib.rs does not auto-start DSH sidecar"
+      - "src/runtime/coding-worker.ts creates real Dock sessions and waits for plans"
     acceptance_evidence: []
     protected: false
 
 claim_policy:
   public_support_claim_requires: ACCEPTED
   accepted_capabilities: []
-  current_product_claim: "Architecture experiment under rescue; VS-001 Phase A+B implemented but not verified/accepted"
+  current_product_claim: "Architecture experiment under rescue; VS-001 planning/approval path implemented but not verified/accepted"
